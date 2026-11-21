@@ -59,7 +59,6 @@ export async function explainInTaglish(
   const excerpt = input.trim();
   if (!excerpt) throw new Error("Paste some code or a docs excerpt first.");
   if (excerpt.length > maxInputLength) throw new Error("Trim your excerpt to 6,000 characters.");
-  const ai = getAI(getFirebaseApp(), { backend: new GoogleAIBackend() });
   const prompt = [
     "Sagutin sa ISANG maikling paragraph na may dalawang pangungusap lang. Diretsong paliwanag, walang intro, bullet list, o English translation.",
     "Taglish sa bawat pangungusap: gumamit ng casual na Filipino at everyday English phrases, gaya ng kausap mo ang kaklase. Keep technical terms in English.",
@@ -70,6 +69,7 @@ export async function explainInTaglish(
 
   onProgress({ stage: "checking" });
   if ("LanguageModel" in window) {
+    const ai = getAI(getFirebaseApp("on-device"), { backend: new GoogleAIBackend() });
     const device = getGenerativeModel(ai, {
       mode: InferenceMode.ONLY_ON_DEVICE,
       onDeviceParams: { createOptions: { expectedInputs: [{ type: "text", languages: ["en"] }] } },
@@ -94,6 +94,7 @@ export async function explainInTaglish(
     throw new Error("You're offline and Nano isn't available. Check Chrome 139+, the Prompt API flag, and the model download.");
   }
   onProgress({ stage: "cloud" });
+  const ai = getAI(getFirebaseApp("cloud"), { backend: new GoogleAIBackend() });
   const cloud = getGenerativeModel(ai, { mode: InferenceMode.ONLY_IN_CLOUD });
   return readResult(await cloud.generateContent(prompt), "cloud");
 }
@@ -102,7 +103,7 @@ export async function getWalkthrough(input: string): Promise<ExplainResult> {
   if (!navigator.onLine) {
     throw new Error("You’re offline. Connect to the internet to go deeper.");
   }
-  const ai = getAI(getFirebaseApp(), { backend: new GoogleAIBackend() });
+  const ai = getAI(getFirebaseApp("cloud"), { backend: new GoogleAIBackend() });
   const cloud = getGenerativeModel(ai, {
     mode: InferenceMode.ONLY_IN_CLOUD,
     inCloudParams: {

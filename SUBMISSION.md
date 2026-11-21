@@ -25,4 +25,5 @@ Nano sometimes answered entirely in English or used formal Tagalog. Examples of 
 Keep the loaded tab open for offline inference. Desktop Chrome needs a compatible, downloaded Nano model. Cloud fallback and **Go deeper** require internet access.
 
 - [Source code](https://github.com/AK-Lmn/Intindi-Hackathon)
-- Hosted app and YouTube link go in the Devpost links once verified.
+- [Hosted app](https://intindi-hackathon.vercel.app/)
+- Add the public YouTube URL when the demo is uploaded.

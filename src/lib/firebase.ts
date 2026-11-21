@@ -34,19 +34,27 @@ export function isFirebaseConfigured(): boolean {
 }
 
 let app: FirebaseApp | null = null;
+let deviceApp: FirebaseApp | null = null;
 
 /**
  * Lazily initialize (and cache) the Firebase app.
  * Throws a clear, human-readable error when the config is missing,
  * so the UI can show a setup hint instead of a cryptic Firebase error.
  */
-export function getFirebaseApp(): FirebaseApp {
-  if (app) return app;
+export function getFirebaseApp(source: "on-device" | "cloud"): FirebaseApp {
+  if (source === "on-device" && deviceApp) return deviceApp;
+  if (source === "cloud" && app) return app;
   if (!isFirebaseConfigured()) {
     throw new Error(
       "Firebase is not configured. Copy .env.example to .env.local and fill in your Firebase project values (see README).",
     );
   }
+  if (source === "on-device") {
+    // Keep the Nano-only AI client independent of the cloud attestation script.
+    deviceApp = initializeApp(firebaseConfig, "intindi-on-device");
+    return deviceApp;
+  }
+
   const localDebug = process.env.NODE_ENV === "development" &&
     ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
   const siteKey = process.env.NEXT_PUBLIC_FIREBASE_RECAPTCHA_SITE_KEY;
