@@ -5,6 +5,7 @@ import { ArrowDown, ArrowRight, BookOpen, Braces, ChevronDown, CircleAlert, Clou
 import { explainInTaglish, getTutorError, getWalkthrough, maxInputLength, type ExplainProgress } from "@/lib/ai";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { historyLimit, readHistory, writeHistory, type SavedExplanation } from "@/lib/history";
+import { Faq } from "./faq";
 
 const samples = [
   { label: "Sample code", icon: Braces, excerpt: "[10, 20, 30].reduce((sum, price) => sum + price, 0);" },
@@ -252,10 +253,13 @@ export default function Home() {
     <main className="mx-auto max-w-[82rem] px-4 pb-14 sm:px-8 lg:px-12">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--intindi-border)] py-4">
         <img src="/intindi.svg" width={112} height={31} alt="Intindi" />
-        <p role="status" className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--intindi-muted)]">
-          <Cpu aria-hidden="true" size={16} />
-          Gemini Nano: {availability}
-        </p>
+        <div className="flex flex-wrap items-center gap-4 text-xs font-semibold text-[var(--intindi-muted)]">
+          <p role="status" className="inline-flex items-center gap-2">
+            <Cpu aria-hidden="true" size={16} />
+            Gemini Nano: {availability}
+          </p>
+          <a href="#faq" className="rounded-sm px-1 py-2 underline underline-offset-4 hover:text-[var(--intindi-focus)]">FAQ</a>
+        </div>
       </header>
 
       <div className="py-7 sm:py-10">
@@ -437,6 +441,7 @@ export default function Home() {
           </ul>
         )}
       </section>
+      <Faq />
     </main>
   );
 }
