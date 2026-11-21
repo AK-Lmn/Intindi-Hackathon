@@ -14,7 +14,9 @@ function isResult(value: unknown): value is ExplainResult {
   if (!value || typeof value !== "object") return false;
   const result = value as Partial<ExplainResult>;
   return typeof result.text === "string" &&
-    (result.source === "on-device" || result.source === "cloud");
+    (result.source === "on-device" || result.source === "cloud") &&
+    (result.durationMs === undefined ||
+      (Number.isFinite(result.durationMs) && result.durationMs >= 0));
 }
 
 function isSavedExplanation(value: unknown): value is SavedExplanation {

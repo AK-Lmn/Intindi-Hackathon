@@ -28,14 +28,31 @@ const loadingCopy = {
   walkthrough: "Building your walkthrough…",
 };
 
-function TutorLoading({ progress, isSlow }: { progress: TutorProgress; isSlow: boolean }) {
+function formatElapsed(ms: number) {
+  const seconds = Math.floor(ms / 1000);
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function TutorLoading({ progress, startedAt }: { progress: TutorProgress; startedAt: number }) {
+  const [elapsed, setElapsed] = useState(0);
   const downloading = progress.stage === "download";
+  useEffect(() => {
+    const update = () => setElapsed(performance.now() - startedAt);
+    update();
+    const timer = window.setInterval(update, 250);
+    return () => window.clearInterval(timer);
+  }, [startedAt]);
   return (
     <div className="answer-enter mt-3 rounded-xl border border-[var(--intindi-border)] bg-white/75 p-3">
-      <p role="status" className="flex items-center gap-2 text-sm font-semibold">
-        <LoaderCircle aria-hidden="true" size={16} className="progress-icon shrink-0" />
-        {loadingCopy[progress.stage]}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p role="status" className="flex items-center gap-2 text-sm font-semibold">
+          <LoaderCircle aria-hidden="true" size={16} className="progress-icon shrink-0" />
+          {loadingCopy[progress.stage]}
+        </p>
+        <span role="timer" aria-label="Elapsed time" className="text-xs tabular-nums text-[var(--intindi-muted)]">
+          {formatElapsed(elapsed)} elapsed
+        </span>
+      </div>
       {downloading ? (
         <>
           <div className="mt-2 flex items-center gap-2">
@@ -50,7 +67,7 @@ function TutorLoading({ progress, isSlow }: { progress: TutorProgress; isSlow: b
           <div className="h-2 w-2/3 rounded-full bg-[var(--intindi-border)]" />
         </div>
       )}
-      {!downloading && isSlow && <p role="status" className="mt-2 text-xs text-[var(--intindi-muted)]">Still working. This is taking a little longer than usual.</p>}
+      {!downloading && elapsed >= 12_000 && <p role="status" className="mt-2 text-xs text-[var(--intindi-muted)]">Still working. This is taking a little longer than usual.</p>}
     </div>
   );
 }
@@ -142,7 +159,7 @@ function WalkthroughContent({ text, excerpt, onLocate }: {
 export default function Home() {
   const [input, setInput] = useState("");
   const [progress, setProgress] = useState<TutorProgress | null>(null);
-  const [isSlow, setIsSlow] = useState(false);
+  const [startedAt, setStartedAt] = useState(0);
   const [current, setCurrent] = useState<SavedExplanation | null>(null);
   const [error, setError] = useState<{ task: "quick" | "walkthrough"; message: string } | null>(null);
   const [history, setHistory] = useState<SavedExplanation[]>([]);
@@ -151,14 +168,6 @@ export default function Home() {
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const answerRef = useRef<HTMLElement>(null);
   const busy = progress !== null;
-  useEffect(() => {
-    if (!busy) {
-      setIsSlow(false);
-      return;
-    }
-    const timer = window.setTimeout(() => setIsSlow(true), 12_000);
-    return () => window.clearTimeout(timer);
-  }, [busy]);
   useEffect(() => {
     try {
       setHistory(readHistory());
@@ -220,14 +229,23 @@ export default function Home() {
 
   async function explain() {
     if (!canExplain) return;
+    const start = performance.now();
+    setStartedAt(start);
     setError(null);
     setProgress({ stage: "checking" });
     setCurrent(null);
     showAnswer();
     try {
       const excerpt = input.trim();
-      const explanation = await explainInTaglish(excerpt, setProgress);
-      save({ id: crypto.randomUUID(), input: excerpt, result: explanation });
+      const explanation = await explainInTaglish(excerpt, update => {
+        setProgress(update);
+        if (update.stage === "device") setAvailability("available");
+      });
+      save({
+        id: crypto.randomUUID(),
+        input: excerpt,
+        result: { ...explanation, durationMs: performance.now() - start },
+      });
     } catch (cause) {
       setError({ task: "quick", message: getTutorError(cause, "quick", navigator.onLine) });
     } finally {
@@ -237,11 +255,13 @@ export default function Home() {
 
   async function goDeeper() {
     if (!current || busy) return;
+    const start = performance.now();
+    setStartedAt(start);
     setError(null);
     setProgress({ stage: "walkthrough" });
     try {
       const detail = await getWalkthrough(current.input);
-      save({ ...current, walkthrough: detail });
+      save({ ...current, walkthrough: { ...detail, durationMs: performance.now() - start } });
     } catch (cause) {
       setError({ task: "walkthrough", message: getTutorError(cause, "walkthrough", navigator.onLine) });
     } finally {
@@ -272,7 +292,7 @@ export default function Home() {
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.12fr)_minmax(0,1fr)] lg:gap-6">
-        <section className="rounded-2xl border border-[var(--intindi-border)] bg-white [@media(min-width:64rem)_and_(min-height:48rem)]:sticky [@media(min-width:64rem)_and_(min-height:48rem)]:top-4">
+        <section className="editor-panel rounded-2xl border border-[var(--intindi-border)] bg-white">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--intindi-border)] px-4 py-3 sm:px-5">
             <label htmlFor="excerpt" className="font-bold">Code or docs</label>
             <p id="input-limit" className="text-xs tabular-nums text-[var(--intindi-muted)]">
@@ -289,7 +309,7 @@ export default function Home() {
               placeholder="Paste your snippet here…"
               aria-describedby="input-limit cloud-note"
               aria-invalid={tooLong}
-              className="block min-h-40 w-full resize-y rounded-lg border border-[var(--intindi-border)] bg-[var(--intindi-paper)] p-3 font-mono text-sm leading-6 placeholder:text-[var(--intindi-muted)]"
+              className="editor-input block min-h-40 w-full resize-y rounded-lg border border-[var(--intindi-border)] bg-[var(--intindi-paper)] p-3 font-mono text-sm leading-6 placeholder:text-[var(--intindi-muted)]"
               onChange={event => selectExcerpt(event.target.value)}
               onKeyDown={event => {
                 if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canExplain) {
@@ -332,6 +352,11 @@ export default function Home() {
             <p id="cloud-note" className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">
               If Nano is unavailable, Intindi sends your excerpt to Gemini in the cloud.
             </p>
+            {(availability === "downloadable" || availability === "downloading") && !busy && (
+              <p className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">
+                First time using Nano? Select Explain in Taglish to start the model download. It can take a few minutes. Stay online and keep this tab open.
+              </p>
+            )}
           </div>
         </section>
 
@@ -359,6 +384,9 @@ export default function Home() {
                 <p className="text-sm leading-6 text-[var(--intindi-muted)]">Paste a snippet or choose a sample to get started.</p>
               )}
             </div>
+            {result?.durationMs !== undefined && (
+              <p className="mt-2 text-xs tabular-nums text-[var(--intindi-muted)]">Took {formatElapsed(result.durationMs)}</p>
+            )}
             {result && !walkthrough && progress?.stage !== "walkthrough" && error?.task !== "walkthrough" && (
               <div className="mt-4 border-t border-[var(--intindi-border)] pt-3">
                 <button
@@ -373,7 +401,7 @@ export default function Home() {
                 <p className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">Uses Gemini in the cloud for a worked example and practice questions.</p>
               </div>
             )}
-            {progress && progress.stage !== "walkthrough" && <TutorLoading progress={progress} isSlow={isSlow} />}
+            {progress && progress.stage !== "walkthrough" && <TutorLoading progress={progress} startedAt={startedAt} />}
             {error && (
               <div className="answer-enter mt-3 rounded-xl border border-[#efc7b8] bg-[#fff4ee] p-3 text-[#763122]">
                 <p role="alert" className="flex items-start gap-2 text-sm leading-6">
@@ -395,13 +423,18 @@ export default function Home() {
           {progress?.stage === "walkthrough" && (
             <section aria-label="Walkthrough loading" className="answer-enter rounded-2xl border border-[var(--intindi-border)] bg-white p-4 sm:p-5">
               <h2 className="font-bold">Walkthrough</h2>
-              <TutorLoading progress={progress} isSlow={isSlow} />
+              <TutorLoading progress={progress} startedAt={startedAt} />
             </section>
           )}
           {walkthrough && (
             <section key={current.id} aria-live="polite" className="answer-enter space-y-4 rounded-2xl border border-[var(--intindi-border)] bg-white p-4 sm:p-5">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="font-bold">Walkthrough</h2>
+                <div>
+                  <h2 className="font-bold">Walkthrough</h2>
+                  {walkthrough.durationMs !== undefined && (
+                    <p className="mt-1 text-xs tabular-nums text-[var(--intindi-muted)]">Took {formatElapsed(walkthrough.durationMs)}</p>
+                  )}
+                </div>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--intindi-sky)] px-2.5 py-1 text-xs font-semibold">
                   <Cloud aria-hidden="true" size={14} /> Cloud
                 </span>

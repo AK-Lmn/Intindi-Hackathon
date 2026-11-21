@@ -1,27 +1,41 @@
+![Intindi logo](src/app/icon.svg)
+
 # Intindi
 
-> Understand code in Taglish.
+**Understand code in Taglish.**
 
-Intindi is a tech tutor for Filipino dev students. Paste code or a documentation excerpt for a quick Taglish explanation. Choose **Go deeper** for a walkthrough and practice questions.
+A tech tutor for Filipino dev students, built for the [KaneCLI Online Hackathon](https://www.kaneclihack.sh/).
 
-[Live app](https://intindi-hackathon.vercel.app/) · [FAQ](https://intindi-hackathon.vercel.app/#faq)
+[↗ Open the live app](https://intindi-hackathon.vercel.app/) · [ⓘ FAQ](https://intindi-hackathon.vercel.app/#faq)
+
+## How to use
+
+1. **Add a snippet.** Paste code or a docs excerpt, or select **Sample code** or **Sample docs**.
+2. **Get a quick answer.** Select **Explain in Taglish**. The source badge tells you where the answer was generated, and the timer shows how long it took.
+3. **Work through an example.** Select **Go deeper** while online. Click a highlighted source quote to find it in the editor, then try the practice questions before opening **Practice answers**.
+4. **Pick up where you left off.** Select a saved explanation in **History** to reopen it in the same browser.
+
+### Try it offline
+
+Open the app in compatible desktop Chrome while online. If Gemini Nano needs a first-time download, paste a snippet and select **Explain in Taglish**. Give the download a few minutes and keep the tab open. Once the app reports **Gemini Nano: available**, switch the loaded tab offline and submit another snippet. Look for **On-device • offline**.
+
+## How it works
+
+| Mode | What you get |
+| --- | --- |
+| **On-device • offline** | A short Taglish explanation from Gemini Nano in compatible desktop Chrome. |
+| **Cloud** | A short Gemini explanation when Nano is unavailable and you're online. |
+| **Go deeper** | A cloud walkthrough with source quotes, a worked example, and three practice questions. |
 
 ## Privacy & Accuracy
 
-- **On-device • offline** means Gemini Nano generated the quick answer on your device.
-- **Cloud** means Firebase AI Logic sent the excerpt to Gemini. **Go deeper** always uses the cloud. Remove passwords, tokens, and private data before pasting.
-- Intindi can suggest why code fails. Verify the explanation with your own debugger, tests, or documentation. Walkthrough quotes are checked against your excerpt, while Gemini generates the explanations.
-
-## Features
-
-- **Quick explanation:** A short Taglish answer from Gemini Nano, with cloud fallback when Nano is unavailable and the browser is online.
-- **Guided walkthrough:** A takeaway, source quotes you can locate in the editor, a worked example, and three practice questions with answers.
-- **Local history:** Reopen recent explanations and completed walkthroughs in the same browser, even offline with the tab loaded.
+- Offline inference keeps the excerpt on your device. Cloud requests send it to Gemini through Firebase AI Logic. Remove passwords, tokens, and private data before pasting.
+- Click a uniquely matching quote in a walkthrough to select it in your excerpt. Intindi checks that the quoted text exists in the source. Gemini generates the explanation, so verify important claims with tests or docs.
 
 ## Input & Storage Limits
 
 - Pasted text only, up to **6,000 characters** per request. Intindi does not fetch links or read files and screenshots.
-- The latest **five** excerpts and their answers are saved in this browser’s site data. History does not sync across devices.
+- The latest **five** excerpts and their answers are saved in this browser’s site data. Saved walkthroughs can be reopened offline while the app is loaded. History does not sync across devices.
 
 ## Architecture
 
@@ -44,7 +58,7 @@ Intindi is a tech tutor for Filipino dev students. Paste code or a documentation
    In PowerShell, use `Copy-Item .env.example .env.local` for the first command. Open [localhost:3000](http://localhost:3000/).
 
 3. To test cloud calls locally, trigger **Go deeper** or a cloud fallback. Register the debug token from DevTools under **Firebase Console → App Check → Apps → Manage debug tokens**, then retry. Keep the token private.
-4. To test Nano, open Intindi in compatible desktop Chrome 139 or later. If needed, enable `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` and relaunch. Stay online for the first model download.
+4. To test Nano, open Intindi in compatible desktop Chrome 139 or later. If needed, enable `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` and relaunch. If Nano is downloadable, select **Explain in Taglish** with a snippet to start the download. Give it a few minutes and keep the tab open and online until it finishes. The first answer can take longer because the timer includes the download.
 
 For production, set the environment variables on your host. Create a score-based reCAPTCHA Enterprise key for the deployed hostname, register it with Firebase App Check, and set `NEXT_PUBLIC_FIREBASE_RECAPTCHA_SITE_KEY` before building.
 

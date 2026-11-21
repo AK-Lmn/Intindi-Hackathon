@@ -67,7 +67,7 @@ const groups = [
     items: [
       {
         question: "Why is my first answer taking longer?",
-        answer: "Chrome may be downloading Gemini Nano. Keep the tab open and stay connected during the download. For a cloud request, check your connection if loading stalls, then retry when prompted.",
+        answer: "If Nano is downloadable, paste a snippet and select Explain in Taglish to start the one-time model download. Give it a few minutes, keep the tab open, and stay online. The first answer’s timer includes the download. Once Nano is ready, later answers can run offline.",
       },
       {
         question: "What if Gemini is busy or the walkthrough fails?",

@@ -7,6 +7,7 @@ import { getFirebaseApp } from "./firebase";
 export interface ExplainResult {
   text: string;
   source: "on-device" | "cloud";
+  durationMs?: number;
 }
 
 export const maxInputLength = 6000;
