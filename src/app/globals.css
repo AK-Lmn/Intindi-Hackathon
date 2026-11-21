@@ -19,17 +19,6 @@
   --motion-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-@media (min-width: 64rem) and (min-height: 40rem) {
-  .editor-panel {
-    position: sticky;
-    top: 1rem;
-  }
-
-  .editor-input {
-    max-height: calc(100dvh - 20rem);
-  }
-}
-
 .pressable {
   transition: background-color 150ms ease-out, scale 150ms var(--motion-out);
 }

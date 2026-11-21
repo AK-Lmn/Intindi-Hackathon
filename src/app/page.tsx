@@ -292,7 +292,7 @@ export default function Home() {
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.12fr)_minmax(0,1fr)] lg:gap-6">
-        <section className="editor-panel rounded-2xl border border-[var(--intindi-border)] bg-white">
+        <section className="rounded-2xl border border-[var(--intindi-border)] bg-white">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--intindi-border)] px-4 py-3 sm:px-5">
             <label htmlFor="excerpt" className="font-bold">Code or docs</label>
             <p id="input-limit" className="text-xs tabular-nums text-[var(--intindi-muted)]">
@@ -309,7 +309,7 @@ export default function Home() {
               placeholder="Paste your snippet here…"
               aria-describedby="input-limit cloud-note"
               aria-invalid={tooLong}
-              className="editor-input block min-h-40 w-full resize-y rounded-lg border border-[var(--intindi-border)] bg-[var(--intindi-paper)] p-3 font-mono text-sm leading-6 placeholder:text-[var(--intindi-muted)]"
+              className="block min-h-40 w-full resize-y rounded-lg border border-[var(--intindi-border)] bg-[var(--intindi-paper)] p-3 font-mono text-sm leading-6 placeholder:text-[var(--intindi-muted)]"
               onChange={event => selectExcerpt(event.target.value)}
               onKeyDown={event => {
                 if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canExplain) {
