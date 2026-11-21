@@ -1,8 +1,14 @@
 @import "tailwindcss";
-@import "../../brand/tokens.css";
 
-/* Minimal base styles — the starter keeps Tailwind's default preflight.
-   Add your own theme tokens here as the design grows. */
+:root {
+  --intindi-ink: #172c69;
+  --intindi-paper: #fbf8f2;
+  --intindi-apricot: #ffc28f;
+  --intindi-sky: #e4edff;
+  --intindi-muted: #4e5c78;
+  --intindi-border: #becbe7;
+  --intindi-focus: #3158cc;
+}
 
 :focus-visible {
   outline: 2px solid var(--intindi-focus);
