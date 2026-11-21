@@ -5,6 +5,7 @@
 // Copy `.env.example` to `.env.local` and fill in your own Firebase project
 // values (Firebase console > Project settings > Your apps > Web app).
 
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
 import { initializeApp, type FirebaseApp } from "firebase/app";
 
 const firebaseConfig = {
@@ -46,14 +47,18 @@ export function getFirebaseApp(): FirebaseApp {
       "Firebase is not configured. Copy .env.example to .env.local and fill in your Firebase project values (see README).",
     );
   }
-  app = initializeApp(firebaseConfig);
-  return app;
+  const localDebug = process.env.NODE_ENV === "development" &&
+    ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+  const siteKey = process.env.NEXT_PUBLIC_FIREBASE_RECAPTCHA_SITE_KEY;
+  if (!siteKey && !localDebug) throw new Error("App Check needs a reCAPTCHA Enterprise site key.");
+  if (localDebug) {
+    // The SDK generates a per-browser token. Register it in the Firebase console.
+    Object.assign(self, { FIREBASE_APPCHECK_DEBUG_TOKEN: true });
+  }
+  const instance = initializeApp(firebaseConfig);
+  initializeAppCheck(instance, {
+    provider: new ReCaptchaEnterpriseProvider(siteKey || "localhost-debug"),
+  });
+  app = instance;
+  return instance;
 }
-
-// TODO: App Check. The Firebase AI Logic guided setup enforces App Check
-// automatically, and AI Logic calls from localhost will fail until a debug
-// token is registered (Firebase console > Security > App Check > Apps >
-// Manage debug tokens). See:
-// https://firebase.google.com/docs/ai-logic/hybrid/web/get-started (Step 4)
-// For the deployed app, configure a real App Check provider (reCAPTCHA
-// Enterprise) in the Firebase console.

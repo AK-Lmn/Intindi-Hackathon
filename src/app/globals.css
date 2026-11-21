@@ -1,4 +1,76 @@
 @import "tailwindcss";
+@import "../../brand/tokens.css";
 
 /* Minimal base styles — the starter keeps Tailwind's default preflight.
    Add your own theme tokens here as the design grows. */
+
+:focus-visible {
+  outline: 2px solid var(--intindi-focus);
+  outline-offset: 3px;
+}
+
+:root {
+  --motion-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pressable {
+  transition: background-color 150ms ease-out, scale 150ms var(--motion-out);
+}
+
+.pressable:active:not(:disabled) {
+  scale: 0.97;
+  transition-duration: 80ms;
+}
+
+.answer-enter,
+.history-row {
+  animation: content-enter 200ms var(--motion-out) backwards;
+}
+
+.history-row:nth-child(2) { animation-delay: 30ms; }
+.history-row:nth-child(3) { animation-delay: 60ms; }
+.history-row:nth-child(4) { animation-delay: 90ms; }
+.history-row:nth-child(5) { animation-delay: 120ms; }
+
+.answer-source {
+  animation: source-confirm 250ms ease-out backwards;
+}
+
+.progress-icon {
+  animation: spinner-turn 900ms linear infinite;
+}
+
+.disclosure-chevron {
+  transition: rotate 160ms var(--motion-out);
+}
+
+@keyframes content-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes source-confirm {
+  from { opacity: 0; scale: 0.96; }
+  55% { opacity: 1; scale: 1.04; }
+  to { opacity: 1; scale: 1; }
+}
+
+@keyframes spinner-turn {
+  to { transform: rotate(1turn); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pressable,
+  .pressable:active:not(:disabled),
+  .disclosure-chevron {
+    scale: 1;
+    transition: none;
+  }
+
+  .answer-enter,
+  .history-row,
+  .answer-source,
+  .progress-icon {
+    animation: none;
+  }
+}

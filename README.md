@@ -1,161 +1,54 @@
-# Intindi — Taglish Tech Tutor
+# Intindi
 
-Starter boilerplate for **#BuildHybridAI 2026**.
+Paste code or an English documentation excerpt for a short Taglish explanation. Slice 1 tries Gemini Nano on the device. If Nano cannot initialize, the same short prompt goes to Firebase AI Logic when online. The badge uses the SDK response source. The app keeps the last five excerpts and explanations in local browser storage, including completed walkthroughs.
 
-**The idea:** a Filipino dev student pastes code or an English doc excerpt and
-gets it explained in Taglish. The on-device model (Gemini Nano) gives a short,
-plain Taglish explanation offline; the cloud model gives a full walkthrough
-with examples + 3 practice questions. That on-device/cloud split is the whole
-point of the hackathon (Firebase AI Logic hybrid inference).
+## Run locally
 
-> This is a **starter**, not a finished app. The UI is intentionally plain so
-> you can make it your own. The AI wiring follows the official Firebase docs
-> (linked below) — no guessed API names.
+1. In the Firebase console, use a Spark project. Enable AI Logic with the Gemini Developer API and register a web app.
+2. Copy `.env.example` to `.env.local`. Set the web API key, project ID and app ID. The reCAPTCHA Enterprise site key is for non-debug builds.
+3. Install with `npm ci` and start with `npm run dev`. Open http://localhost:3000.
+4. During localhost development, the Firebase App Check SDK generates a debug token on initialization. Click Explain, copy the token from Chrome DevTools directly into Firebase Console (App Check, Apps, Manage debug tokens), then retry. Keep the token private.
+5. In desktop Chrome 139 or later, enable `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` and relaunch. Stay online for the first model download. Keep the loaded page open for offline inference.
 
-## Quick start
+[Firebase hybrid web setup](https://firebase.google.com/docs/ai-logic/hybrid/web/get-started) · [App Check debug provider](https://firebase.google.com/docs/app-check/web/debug-provider)
 
-### 1. Create a Firebase project + enable AI Logic
+## Manual acceptance checks
 
-1. Go to the [Firebase console](https://console.firebase.google.com/) and
-   create a project (or pick an existing one).
-2. Go to **AI Services > AI Logic** and click **Get started** to launch the
-   guided setup.
-3. When asked for a Gemini API provider, choose the **Gemini Developer API**
-   (free to start, no billing needed).
-4. Register a **Web app** in the project and copy its Firebase config.
+Use these four inputs separately. For each, record the actual answer and badge. Pass when the answer correctly explains the excerpt in conversational Filipino and English, in 2–4 sentences.
 
-Docs: https://firebase.google.com/docs/ai-logic/hybrid/web/get-started
+| Input | Meaning to check |
+| --- | --- |
+| `[1, 2, 3, 4].filter(n => n % 2 === 0)` | Keeps 2 and 4 |
+| `SELECT customer_id, COUNT(*) FROM orders GROUP BY customer_id;` | Counts orders per customer |
+| `const next = items.map(item => ({ ...item, done: true }));` | Creates a new array of copies with done set to true |
+| An HTTP 304 response lets a client reuse its cached representation after revalidation. | Client reuses cached content after checking with the server |
 
-### 2. Set up Chrome for on-device inference
+- Warm Nano online. Each local result must show **On-device • offline**.
+- With the loaded page open, set DevTools Network to Offline. Submit a different excerpt and check for a fresh local answer.
+- Open the app online in a browser without the Prompt API. Expect a cloud fallback notice, a short answer, and **Cloud**.
+- Repeat without internet. Expect offline guidance and no result badge.
+- Try whitespace and more than 6,000 characters. Explain stays disabled.
 
-On-device inference only works in **Chrome on Desktop v139+**:
+## Observed on November 19, 2026
 
-1. Update Chrome (`chrome://settings/help`).
-2. Enable the flag `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input`.
-3. Restart Chrome.
-4. Optional: pre-download the on-device model — open DevTools > Console and
-   run `await LanguageModel.create()` (check with
-   `await LanguageModel.availability()` first). Otherwise the model downloads
-   automatically on the first request.
+Chrome 157.0.8103.79 on Windows reported Nano available. Using temporary Firebase demo identifiers and the loaded tab in DevTools Offline mode, the final prompt produced a fresh two-sentence Taglish answer for each of the four inputs above. All four responses carried the SDK on-device source. The filter answer explained the even-number rule. The SQL answer counted orders by customer. The map answer described copying properties and setting done. The documentation answer explained cached reuse after a 304.
 
-### 3. Configure environment variables
+One sentence from the SQL run: “`GROUP BY customer_id` ang nagpapangkat ng orders sa bawat customer, at ang `COUNT(*)` naman ay kinukuha ang bilang ng orders sa bawat grupo.”
 
-```bash
-cp .env.example .env.local
-```
+The live Spark project is `intindi-45f74`. Firebase AI Logic and the Gemini Developer API are enabled. The local Chrome debug token is registered in Firebase App Check. With the Prompt API temporarily removed from the test tab, Firebase AI Logic returned HTTP 200 with a short Taglish explanation of HTTP 304 and the app showed **Cloud**. The request carried an App Check header. The Firebase console reported Basic - Unenforced during verification.
 
-Fill in your Firebase web config values in `.env.local`. Never commit real
-keys — `.env.local` is gitignored.
+On November 21, 2026, Playwright verified offline inference with the live project configuration in a dedicated Chrome profile. After the Nano download, the browser reported offline before and after submission. Intindi showed **On-device • offline** and a Taglish explanation that correctly gave 60 for the `reduce()` sum. The answer also used misleading wording about subtraction.
 
-### 4. Install + run
+## Go deeper
 
-```bash
-npm install
-npm run dev
-```
+After a short explanation, select **Go deeper** to send the same excerpt to Gemini for a Taglish walkthrough, examples, and three practice questions with answers. The walkthrough displays a **Cloud** badge.
 
-Open http://localhost:3000.
+- Online, check for numbered steps, examples, three questions, and an answer section.
+- Offline after a short answer, select **Go deeper**. Check that the internet connection message appears and the short answer remains visible.
+- Edit the excerpt after getting a walkthrough. Check that the previous results clear.
 
-### 5. Deploy to Vercel
+Live verification in the dedicated Chrome profile passed after registering its localhost debug token for the Intindi web app. App Check and AI Logic returned HTTP 200. The live `reduce()` walkthrough showed the Cloud badge, numbered steps, two examples, and three practice questions with answers. The response repeated some prompt instructions in its headings.
 
-```bash
-npx vercel
-```
+## License
 
-Add the same `NEXT_PUBLIC_FIREBASE_*` values in the Vercel project settings
-(Environment Variables) — the app reads them at build/run time.
-
-## How the hybrid split works
-
-Code: [`src/lib/ai.ts`](src/lib/ai.ts) — the only file that talks to Firebase AI.
-
-| | On-device | Cloud |
-| --- | --- | --- |
-| Model | Gemini Nano (built into Chrome) | `gemini-3.5-flash-lite` (explicit in `inCloudParams`) |
-| API | `getGenerativeModel(ai, { mode: InferenceMode.ONLY_ON_DEVICE })` | `getGenerativeModel(ai, { mode: InferenceMode.ONLY_IN_CLOUD, inCloudParams: { model } })` |
-| Prompt | Short, plain Taglish explanation (3–5 sentences) | Full walkthrough + examples + 3 practice questions |
-| Badge | “On-device • offline” (green) | “Cloud” (blue) |
-| Needs internet? | No (once the model is downloaded) | Yes |
-
-Flow in `explainInTaglish(input)`:
-
-1. Call `deviceModel.initializeDeviceModel()` — this **must** run on a user
-   gesture (the Explain button click), per the docs.
-2. Try the on-device model with the short prompt. If it answers, return it
-   with `source: "on-device"`.
-3. If on-device throws (not Chrome 139+, model not downloaded, no Prompt API
-   flag), fall back to the cloud model with the full prompt and return it with
-   `source: "cloud"`.
-4. The response's `inferenceSource` property (`"ON_DEVICE"` / `"IN_CLOUD"`)
-   is read to label the result.
-
-References:
-
-- Get started, hybrid inference (Web):
-  https://firebase.google.com/docs/ai-logic/hybrid/web/get-started
-- Configuration options, hybrid inference (Web):
-  https://firebase.google.com/docs/ai-logic/hybrid/web/configuration-options
-- Firebase AI Logic docs: https://firebase.google.com/docs/ai-logic
-
-## Project structure
-
-```
-intindi-boilerplate/
-├── package.json                 # Next 15, React 19, firebase, Tailwind v4
-├── next.config.ts
-├── postcss.config.mjs           # Tailwind v4 PostCSS plugin
-├── tsconfig.json
-├── .env.example                 # Placeholder Firebase config (no real keys)
-├── src/
-│   ├── lib/
-│   │   ├── firebase.ts          # Firebase app init from env vars
-│   │   └── ai.ts                # explainInTaglish() — hybrid on-device/cloud
-│   └── app/
-│       ├── layout.tsx
-│       ├── page.tsx             # Textarea, Explain button, result + badge, history
-│       └── globals.css          # Tailwind import
-└── README.md
-```
-
-## Submission checklist (BuildHybridAI 2026)
-
-From the Devpost rules — make sure all of these are true before submitting:
-
-- [ ] Public repo with an open-source license file (any license; Apache is
-      preferred by the organizers).
-- [ ] `Firebase AI Logic` is actually **called at runtime** in the code — an
-      import alone doesn't count. `src/lib/ai.ts` does this.
-- [ ] Demo video (max 3 minutes) on YouTube, showing the app working —
-      including the wifi-off moment (on-device still works offline).
-- [ ] Text description: how you used Firebase AI Logic, features, value
-      proposition.
-- [ ] Hosted project URL (Vercel) included — strongly encouraged.
-- [ ] Submit by **30 Nov 2026, 5:00 PM ET** (1 Dec, 6:00 AM Manila).
-
-## TODO (left for the build)
-
-- [ ] **App Check on localhost.** The AI Logic guided setup enforces App
-      Check automatically. If calls fail locally with an App Check error,
-      register a debug token: Firebase console > Security > App Check > Apps >
-      Manage debug tokens. See the get-started guide (Step 4). For the
-      deployed app, configure a real App Check provider (reCAPTCHA Enterprise).
-- [ ] **Verify on-device in Chrome 139+.** Confirm the on-device path works
-      end-to-end (flag on, model downloaded) and the “On-device • offline”
-      badge appears. Test the wifi-off demo on camera.
-- [ ] **On-device system prompt.** The on-device model gets its instructions
-      from the prompt text itself (single-turn generation). If you want a
-      persistent system prompt on-device, use `onDeviceParams.createOptions.initialPrompts`
-      (see the configuration-options docs) and test that Nano follows it.
-- [ ] **Taglish language hint.** The on-device config example uses
-      `expectedInputs: [{ type: "text", languages: ["en"] }]`. Taglish is not
-      a documented Prompt API language code — the prompt text itself is in
-      Taglish, which is what matters, but verify Nano answers in Taglish
-      (not English) in your tests.
-- [ ] **Design.** The UI is a plain starter — give it a real visual identity
-      (the hackathon judges score Design as a full criterion).
-- [ ] **History.** History is localStorage-only (last 5). Decide if you want
-      Firestore persistence or per-user saved explanations.
-- [ ] **License.** Add a `LICENSE` file (e.g. MIT or Apache 2.0) before
-      submitting — the repo must be open source with a detectable license.
-- [ ] **Demo video.** Record the ≤3 min YouTube demo (wifi-off moment
-      included) and write the submission description.
+Intindi is available under the [Apache License 2.0](LICENSE).

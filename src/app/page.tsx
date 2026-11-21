@@ -1,258 +1,442 @@
 "use client";
 
-// Intindi — Taglish tech tutor (starter UI).
-// Paste code or an English doc excerpt, get it explained in Taglish.
-// The AI call lives in src/lib/ai.ts and runs on-device (Gemini Nano) when
-// possible, falling back to the cloud model otherwise.
-
-import { useEffect, useState } from "react";
-import {
-  explainInTaglish,
-  getOnDeviceStatus,
-  type ExplainResult,
-  type ExplainSource,
-} from "@/lib/ai";
+import { useEffect, useRef, useState } from "react";
+import { ArrowDown, ArrowRight, BookOpen, Braces, ChevronDown, CircleAlert, Cloud, Cpu, History, LoaderCircle, RotateCcw, ScanLine } from "lucide-react";
+import { explainInTaglish, getTutorError, getWalkthrough, maxInputLength, type ExplainProgress } from "@/lib/ai";
 import { isFirebaseConfigured } from "@/lib/firebase";
+import { historyLimit, readHistory, writeHistory, type SavedExplanation } from "@/lib/history";
 
-const CODE_SAMPLE = `function debounce(fn, delay) {
-  let timer;
-  return function (...args) {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), delay);
-  };
-}`;
+const samples = [
+  { label: "Sample code", icon: Braces, excerpt: "[10, 20, 30].reduce((sum, price) => sum + price, 0);" },
+  {
+    label: "Sample docs",
+    icon: BookOpen,
+    excerpt: "An HTTP 304 response lets a client reuse its cached representation after revalidation.",
+  },
+];
 
-const DOC_SAMPLE = `A closure is a function that remembers the variables from the scope where it was created, even after that scope has finished executing. This lets the inner function access the outer function's variables later, whenever it is called.`;
+const walkthroughHeadings = /^(Takeaway|Step by step|Worked example|Examples|Practice questions|Answers)[ \t]*$/m;
 
-const HISTORY_KEY = "intindi-history";
-const HISTORY_LIMIT = 5;
+type TutorProgress = ExplainProgress | { stage: "walkthrough" };
 
-interface HistoryItem {
-  input: string;
-  source: ExplainSource;
-  at: string;
+const loadingCopy = {
+  checking: "Checking for Gemini Nano…",
+  download: "Downloading Gemini Nano…",
+  device: "Writing your explanation on this device…",
+  cloud: "Writing your explanation with Gemini in the cloud…",
+  walkthrough: "Building your walkthrough…",
+};
+
+function TutorLoading({ progress, isSlow }: { progress: TutorProgress; isSlow: boolean }) {
+  const downloading = progress.stage === "download";
+  return (
+    <div className="answer-enter mt-3 rounded-xl border border-[var(--intindi-border)] bg-white/75 p-3">
+      <p role="status" className="flex items-center gap-2 text-sm font-semibold">
+        <LoaderCircle aria-hidden="true" size={16} className="progress-icon shrink-0" />
+        {loadingCopy[progress.stage]}
+      </p>
+      {downloading ? (
+        <>
+          <div className="mt-2 flex items-center gap-2">
+            <progress aria-label="Gemini Nano download" value={progress.percent} max={100} className="h-2 min-w-0 flex-1 accent-[var(--intindi-focus)]" />
+            <span aria-hidden="true" className="text-xs tabular-nums">{progress.percent}%</span>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">The first download can take a few minutes. Keep this tab open.</p>
+        </>
+      ) : (
+        <div aria-hidden="true" className="mt-3 space-y-2">
+          <div className="h-2 w-full rounded-full bg-[var(--intindi-border)]" />
+          <div className="h-2 w-2/3 rounded-full bg-[var(--intindi-border)]" />
+        </div>
+      )}
+      {!downloading && isSlow && <p role="status" className="mt-2 text-xs text-[var(--intindi-muted)]">Still working. This is taking a little longer than usual.</p>}
+    </div>
+  );
 }
 
-function loadHistory(): HistoryItem[] {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    return raw ? (JSON.parse(raw) as HistoryItem[]) : [];
-  } catch {
-    return [];
-  }
+function ExplanationText({ text }: { text: string }) {
+  return text.split(/(`[^`\n]+`)/g).map((part, index) =>
+    index % 2 === 1 ? <code key={index} className="rounded bg-white/65 px-1 font-mono text-[0.9em]">{part.slice(1, -1)}</code> : part,
+  );
 }
 
-function badgeFor(source: ExplainSource) {
-  return source === "on-device"
-    ? {
-        label: "On-device • offline",
-        className: "bg-emerald-100 text-emerald-800 border-emerald-300",
-      }
-    : {
-        label: "Cloud",
-        className: "bg-sky-100 text-sky-800 border-sky-300",
-      };
+function WalkthroughContent({ text, excerpt, onLocate }: {
+  text: string;
+  excerpt: string;
+  onLocate: (quote: string) => void;
+}) {
+  const [intro, ...parts] = text.split(walkthroughHeadings);
+  return (
+    <div className="space-y-5 text-sm leading-6 [overflow-wrap:anywhere]">
+      {intro.trim() && <p className="whitespace-pre-wrap"><ExplanationText text={intro.trim()} /></p>}
+      {parts.map((heading, index) => {
+        if (index % 2) return null;
+        const body = parts[index + 1]?.trim();
+        if (!body) return null;
+        const items = body.split(/(?:^|\n)[ \t]*\d+\.[ \t]+/);
+        const numbered = items.length > 1 && !items[0];
+
+        if (heading === "Takeaway" || heading === "Worked example") {
+          return (
+            <div key={index} className={heading === "Takeaway"
+              ? "rounded-xl bg-[var(--intindi-sky)] px-4 py-3"
+              : "rounded-xl border border-[var(--intindi-border)] bg-[var(--intindi-paper)] px-4 py-3"}>
+              <h3 className="font-bold">{heading}</h3>
+              <p className="mt-1 whitespace-pre-wrap"><ExplanationText text={body} /></p>
+            </div>
+          );
+        }
+
+        if (heading === "Answers") {
+          return (
+            <details key={index} className="group rounded-xl border border-[var(--intindi-border)]">
+              <summary className="pressable flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-xl px-4 font-bold hover:bg-[var(--intindi-sky)] [&::-webkit-details-marker]:hidden">
+                Practice answers
+                <ChevronDown aria-hidden="true" size={16} className="disclosure-chevron shrink-0 group-open:rotate-180" />
+              </summary>
+              <div className="answer-enter border-t border-[var(--intindi-border)] px-4 py-3">
+                {numbered
+                  ? <ol className="ml-5 list-decimal space-y-2">{items.slice(1).map((item, i) => <li key={i}><ExplanationText text={item.trim()} /></li>)}</ol>
+                  : <p className="whitespace-pre-wrap"><ExplanationText text={body} /></p>}
+              </div>
+            </details>
+          );
+        }
+
+        return (
+          <div key={index}>
+            <h3 className="font-bold">{heading}</h3>
+            {numbered ? (
+              <ol className="mt-2 ml-5 list-decimal space-y-3 marker:font-semibold">
+                {items.slice(1).map((item, i) => {
+                  const step = heading === "Step by step" ? item.trim().match(/^`([^`]+)` — ([\s\S]+)$/) : null;
+                  return (
+                    <li key={i} className="pl-1">
+                      {step && excerpt.includes(step[1]) && excerpt.indexOf(step[1]) === excerpt.lastIndexOf(step[1]) ? (
+                        <>
+                          <button
+                            type="button"
+                            title="Select this quote in your excerpt"
+                            onClick={() => onLocate(step[1])}
+                            className="pressable inline-flex max-w-full items-center gap-2 rounded-md bg-[var(--intindi-sky)] px-2 py-1 text-left hover:bg-[var(--intindi-border)]"
+                          >
+                            <ScanLine aria-hidden="true" size={14} className="shrink-0" />
+                            <code className="min-w-0 whitespace-pre-wrap text-xs">{step[1]}</code>
+                          </button>
+                          <p className="mt-1"><ExplanationText text={step[2]} /></p>
+                        </>
+                      ) : <ExplanationText text={item.trim()} />}
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : <p className="mt-1 whitespace-pre-wrap"><ExplanationText text={body} /></p>}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function Home() {
   const [input, setInput] = useState("");
-  const [result, setResult] = useState<ExplainResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState("");
-  const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [deviceStatus, setDeviceStatus] = useState<string>("unknown");
-
+  const [progress, setProgress] = useState<TutorProgress | null>(null);
+  const [isSlow, setIsSlow] = useState(false);
+  const [current, setCurrent] = useState<SavedExplanation | null>(null);
+  const [error, setError] = useState<{ task: "quick" | "walkthrough"; message: string } | null>(null);
+  const [history, setHistory] = useState<SavedExplanation[]>([]);
+  const [historyError, setHistoryError] = useState("");
+  const [availability, setAvailability] = useState("checking");
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const answerRef = useRef<HTMLElement>(null);
+  const busy = progress !== null;
   useEffect(() => {
-    setHistory(loadHistory());
-    getOnDeviceStatus().then(setDeviceStatus).catch(() => undefined);
+    if (!busy) {
+      setIsSlow(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setIsSlow(true), 12_000);
+    return () => window.clearTimeout(timer);
+  }, [busy]);
+  useEffect(() => {
+    try {
+      setHistory(readHistory());
+    } catch {
+      setHistoryError("Could not load saved history.");
+    }
   }, []);
+  useEffect(() => {
+    const { LanguageModel } = window as Window & {
+      LanguageModel?: { availability(options: object): Promise<string> };
+    };
+    if (!LanguageModel) {
+      setAvailability("Prompt API unavailable");
+      return;
+    }
+    LanguageModel.availability({ expectedInputs: [{ type: "text", languages: ["en"] }],
+      expectedOutputs: [{ type: "text", languages: ["en"] }] })
+      .then(setAvailability, () => setAvailability("unknown"));
+  }, []);
+  const configured = isFirebaseConfigured();
+  const tooLong = input.trim().length > maxInputLength;
+  const canExplain = configured && !!input.trim() && !tooLong && !progress;
+  const result = current?.result;
+  const walkthrough = current?.walkthrough;
 
-  function saveToHistory(item: HistoryItem) {
-    const next = [item, ...loadHistory()].slice(0, HISTORY_LIMIT);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
-    setHistory(next);
+  function selectExcerpt(excerpt: string, saved: SavedExplanation | null = null) {
+    setInput(excerpt);
+    setCurrent(saved);
+    setError(null);
   }
 
-  async function handleExplain() {
-    setError("");
-    setResult(null);
-    setCopied(false);
-    setLoading(true);
-    setProgress("");
-    try {
-      const res = await explainInTaglish(input, setProgress);
-      setResult(res);
-      saveToHistory({ input: input.trim(), source: res.source, at: new Date().toISOString() });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "May nangyaring mali. Subukan ulit.");
-    } finally {
-      setLoading(false);
-      setProgress("");
+  function showAnswer(fromHistory = false) {
+    if (fromHistory || window.matchMedia("(width < 64rem)").matches) {
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      answerRef.current?.scrollIntoView({ block: "nearest", behavior: reduceMotion ? "instant" : "smooth" });
     }
   }
 
-  function handleCopy() {
-    if (!result) return;
-    navigator.clipboard.writeText(result.text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+  function locateQuote(quote: string) {
+    const start = input.indexOf(quote);
+    if (start < 0) return;
+    editorRef.current?.focus();
+    editorRef.current?.setSelectionRange(start, start + quote.length);
   }
 
-  const configured = isFirebaseConfigured();
-  const badge = result ? badgeFor(result.source) : null;
+  function save(entry: SavedExplanation) {
+    const next = history.some(item => item.id === entry.id)
+      ? history.map(item => item.id === entry.id ? entry : item)
+      : [entry, ...history].slice(0, historyLimit);
+    setCurrent(entry);
+    setHistory(next);
+    try {
+      writeHistory(next);
+      setHistoryError("");
+    } catch {
+      setHistoryError("Your answer is ready. The browser could not save it to history.");
+    }
+  }
+
+  async function explain() {
+    if (!canExplain) return;
+    setError(null);
+    setProgress({ stage: "checking" });
+    setCurrent(null);
+    showAnswer();
+    try {
+      const excerpt = input.trim();
+      const explanation = await explainInTaglish(excerpt, setProgress);
+      save({ id: crypto.randomUUID(), input: excerpt, result: explanation });
+    } catch (cause) {
+      setError({ task: "quick", message: getTutorError(cause, "quick", navigator.onLine) });
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  async function goDeeper() {
+    if (!current || busy) return;
+    setError(null);
+    setProgress({ stage: "walkthrough" });
+    try {
+      const detail = await getWalkthrough(current.input);
+      save({ ...current, walkthrough: detail });
+    } catch (cause) {
+      setError({ task: "walkthrough", message: getTutorError(cause, "walkthrough", navigator.onLine) });
+    } finally {
+      setProgress(null);
+    }
+  }
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
-      <header className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Intindi</h1>
-        <p className="mt-1 text-zinc-600">
-          Ipaliwanag sa Taglish — code at docs, sa salitang naiintindihan mo.
-        </p>
-        <p className="mt-2 text-xs text-zinc-500">
-          Starter para sa #BuildHybridAI 2026 • Firebase AI Logic (on-device + cloud)
+    <main className="mx-auto max-w-[82rem] px-4 pb-14 sm:px-8 lg:px-12">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--intindi-border)] py-4">
+        <img src="/intindi.svg" width={112} height={31} alt="Intindi" />
+        <p role="status" className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--intindi-muted)]">
+          <Cpu aria-hidden="true" size={16} />
+          Gemini Nano: {availability}
         </p>
       </header>
 
-      {!configured && (
-        <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
-          <p className="font-semibold">Firebase is not configured yet.</p>
-          <p className="mt-1">
-            Copy <code className="rounded bg-amber-100 px-1">.env.example</code> to{" "}
-            <code className="rounded bg-amber-100 px-1">.env.local</code> and fill in your
-            Firebase project values. See the README for the setup steps.
-          </p>
-        </div>
-      )}
+      <div className="py-7 sm:py-10">
+        <h1 className="text-balance text-3xl leading-tight font-bold tracking-[-0.045em] sm:text-5xl">
+          Understand code in Taglish.
+        </h1>
+        <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--intindi-muted)] sm:text-base">
+          Paste code or a docs excerpt for a quick explanation in everyday Filipino and English.
+        </p>
+      </div>
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-6">
-        <label htmlFor="input" className="mb-2 block text-sm font-semibold">
-          I-paste ang code o English doc excerpt
-        </label>
-        <textarea
-          id="input"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          rows={8}
-          placeholder={"Halimbawa:\nfunction debounce(fn, delay) { ... }"}
-          className="w-full rounded-lg border border-zinc-300 bg-zinc-50 p-3 font-mono text-sm outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-        />
-
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setInput(CODE_SAMPLE)}
-            className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-100"
-          >
-            Halimbawa: code
-          </button>
-          <button
-            type="button"
-            onClick={() => setInput(DOC_SAMPLE)}
-            className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-100"
-          >
-            Halimbawa: doc excerpt
-          </button>
-        </div>
-
-        <button
-          type="button"
-          onClick={handleExplain}
-          disabled={loading || !input.trim() || !configured}
-          className="mt-4 w-full rounded-lg bg-zinc-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {loading ? "Iniisip…" : "Ipaliwanag sa Taglish"}
-        </button>
-
-        {loading && progress && (
-          <p className="mt-3 text-center text-xs text-zinc-500" role="status">
-            {progress}
-          </p>
-        )}
-
-        {error && (
-          <p className="mt-4 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800" role="alert">
-            {error}
-          </p>
-        )}
-      </section>
-
-      {result && badge && (
-        <section className="mt-6 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-6">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <span
-              className={`inline-block rounded-full border px-2.5 py-1 text-xs font-semibold ${badge.className}`}
-            >
-              {badge.label}
-            </span>
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.12fr)_minmax(0,1fr)] lg:gap-6">
+        <section className="rounded-2xl border border-[var(--intindi-border)] bg-white [@media(min-width:64rem)_and_(min-height:48rem)]:sticky [@media(min-width:64rem)_and_(min-height:48rem)]:top-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--intindi-border)] px-4 py-3 sm:px-5">
+            <label htmlFor="excerpt" className="font-bold">Code or docs</label>
+            <p id="input-limit" className="text-xs tabular-nums text-[var(--intindi-muted)]">
+              {input.trim().length.toLocaleString("en-US")} / 6,000
+            </p>
+          </div>
+          <div className="p-4 sm:p-5">
+            <textarea
+              ref={editorRef}
+              id="excerpt"
+              rows={8}
+              value={input}
+              disabled={!!progress}
+              placeholder="Paste your snippet here…"
+              aria-describedby="input-limit cloud-note"
+              aria-invalid={tooLong}
+              className="block min-h-40 w-full resize-y rounded-lg border border-[var(--intindi-border)] bg-[var(--intindi-paper)] p-3 font-mono text-sm leading-6 placeholder:text-[var(--intindi-muted)]"
+              onChange={event => selectExcerpt(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canExplain) {
+                  event.preventDefault();
+                  void explain();
+                }
+              }}
+            />
+            <div className="mt-2 flex flex-wrap gap-1">
+              {samples.map(({ label, icon: Icon, excerpt }) => (
+                <button
+                  key={label}
+                  type="button"
+                  disabled={!!progress}
+                  className="pressable inline-flex min-h-10 items-center gap-2 rounded-lg px-2.5 text-xs font-semibold hover:bg-[var(--intindi-sky)] disabled:opacity-50"
+                  onClick={() => {
+                    selectExcerpt(excerpt);
+                    editorRef.current?.focus({ preventScroll: true });
+                  }}
+                >
+                  <Icon aria-hidden="true" size={15} />
+                  {label}
+                </button>
+              ))}
+            </div>
+            {tooLong && <p role="alert" className="mt-2 text-sm text-[#8c3629]">Trim your excerpt to 6,000 characters.</p>}
+            {!configured && <p role="status" className="mt-2 text-sm">Add your Firebase web config to .env.local first.</p>}
             <button
               type="button"
-              onClick={handleCopy}
-              className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium hover:bg-zinc-100"
+              onClick={explain}
+              disabled={!canExplain}
+              aria-keyshortcuts="Control+Enter Meta+Enter"
+              className="pressable mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-[var(--intindi-apricot)] px-4 text-sm font-bold hover:bg-[#ffb678] disabled:opacity-50"
             >
-              {copied ? "Nakopya na!" : "Kopyahin"}
+              {busy && progress.stage !== "walkthrough" ? "Working on your explanation…" : "Explain in Taglish"}
+              {busy && progress.stage !== "walkthrough"
+                ? <LoaderCircle aria-hidden="true" size={17} className="progress-icon" />
+                : <ArrowRight aria-hidden="true" size={17} />}
             </button>
+            <p id="cloud-note" className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">
+              If Nano is unavailable, Intindi sends your excerpt to Gemini in the cloud.
+            </p>
           </div>
-          <p className="whitespace-pre-wrap text-sm leading-relaxed">{result.text}</p>
-          <p className="mt-3 text-xs text-zinc-500">
-            {result.source === "on-device"
-              ? "Galing ito sa on-device model (Gemini Nano) — gumagana kahit walang internet."
-              : "Galing ito sa cloud model — mas malalim na paliwanag, may mga halimbawa at practice questions."}
-          </p>
         </section>
-      )}
 
-      <section className="mt-6 rounded-xl border border-dashed border-zinc-300 bg-zinc-100/60 p-4 text-sm text-zinc-700">
-        <p className="font-semibold">Pang-demo (wifi-off moment)</p>
-        <p className="mt-1">
-          I-off ang wifi, tapos i-click ang “Ipaliwanag sa Taglish”. Kung naka-download na
-          ang on-device model sa Chrome, dapat gumana pa rin — at lalabas ang badge na{" "}
-          <span className="font-semibold">“On-device • offline”</span>. I-on ulit ang wifi
-          para sa mas malalim na cloud walkthrough.
-        </p>
-        <p className="mt-2 text-xs text-zinc-500">
-          On-device status sa browser na ito:{" "}
-          <span className="font-semibold">{deviceStatus}</span> (kailangan ng Chrome sa
-          Desktop v139+ at naka-enable ang Prompt API flag — tingnan ang README).
-        </p>
-      </section>
-
-      {history.length > 0 && (
-        <section className="mt-6">
-          <h2 className="mb-2 text-sm font-semibold text-zinc-700">Huling mga paliwanag</h2>
-          <ul className="space-y-2">
-            {history.map((item, i) => (
-              <li key={`${item.at}-${i}`}>
+        <div className="min-w-0 space-y-4">
+          <section
+            ref={answerRef}
+            aria-labelledby="answer-heading"
+            className="min-h-48 scroll-mt-4 rounded-2xl border border-[var(--intindi-border)] bg-[var(--intindi-sky)] p-4 sm:p-5"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 id="answer-heading" className="font-bold">Quick explanation</h2>
+              {result && (
+                <span key={current.id} className="answer-source inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-xs font-semibold">
+                  {result.source === "on-device" ? <Cpu aria-hidden="true" size={14} /> : <Cloud aria-hidden="true" size={14} />}
+                  {result.source === "on-device" ? "On-device • offline" : "Cloud"}
+                </span>
+              )}
+            </div>
+            <div aria-live="polite" className="mt-3">
+              {result ? (
+                <p key={current.id} className="answer-enter whitespace-pre-wrap leading-7 [overflow-wrap:anywhere]">
+                  <ExplanationText text={result.text} />
+                </p>
+              ) : !progress && !error && (
+                <p className="text-sm leading-6 text-[var(--intindi-muted)]">Paste a snippet or choose a sample to get started.</p>
+              )}
+            </div>
+            {result && !walkthrough && progress?.stage !== "walkthrough" && error?.task !== "walkthrough" && (
+              <div className="mt-4 border-t border-[var(--intindi-border)] pt-3">
                 <button
                   type="button"
-                  onClick={() => {
-                    setInput(item.input);
-                    setResult(null);
-                    setError("");
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
-                  className="w-full rounded-lg border border-zinc-200 bg-white p-3 text-left text-sm hover:bg-zinc-100"
+                  onClick={goDeeper}
+                  disabled={!!progress}
+                  className="pressable inline-flex min-h-10 items-center gap-2 rounded-lg border border-[var(--intindi-focus)] px-3 text-sm font-bold hover:bg-white disabled:opacity-50"
                 >
-                  <span className="block truncate font-mono text-xs text-zinc-600">
-                    {item.input.slice(0, 80)}
-                    {item.input.length > 80 ? "…" : ""}
-                  </span>
-                  <span className="mt-1 block text-xs text-zinc-500">
-                    {item.source === "on-device" ? "On-device • offline" : "Cloud"} •{" "}
-                    {new Date(item.at).toLocaleString()}
-                  </span>
+                  Go deeper
+                  <ArrowDown aria-hidden="true" size={16} />
+                </button>
+                <p className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">Uses Gemini in the cloud for a worked example and practice questions.</p>
+              </div>
+            )}
+            {progress && progress.stage !== "walkthrough" && <TutorLoading progress={progress} isSlow={isSlow} />}
+            {error && (
+              <div className="answer-enter mt-3 rounded-xl border border-[#efc7b8] bg-[#fff4ee] p-3 text-[#763122]">
+                <p role="alert" className="flex items-start gap-2 text-sm leading-6">
+                  <CircleAlert aria-hidden="true" size={17} className="mt-1 shrink-0" />
+                  {error.message}
+                </p>
+                <button
+                  type="button"
+                  onClick={error.task === "quick" ? explain : goDeeper}
+                  className="pressable mt-2 inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#efc7b8] px-3 text-sm font-semibold hover:bg-white"
+                >
+                  <RotateCcw aria-hidden="true" size={15} />
+                  Try again
+                </button>
+              </div>
+            )}
+          </section>
+
+          {progress?.stage === "walkthrough" && (
+            <section aria-label="Walkthrough loading" className="answer-enter rounded-2xl border border-[var(--intindi-border)] bg-white p-4 sm:p-5">
+              <h2 className="font-bold">Walkthrough</h2>
+              <TutorLoading progress={progress} isSlow={isSlow} />
+            </section>
+          )}
+          {walkthrough && (
+            <section key={current.id} aria-live="polite" className="answer-enter space-y-4 rounded-2xl border border-[var(--intindi-border)] bg-white p-4 sm:p-5">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-bold">Walkthrough</h2>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--intindi-sky)] px-2.5 py-1 text-xs font-semibold">
+                  <Cloud aria-hidden="true" size={14} /> Cloud
+                </span>
+              </div>
+              <WalkthroughContent text={walkthrough.text} excerpt={current.input} onLocate={locateQuote} />
+            </section>
+          )}
+        </div>
+      </div>
+
+      <section aria-labelledby="history-heading" className="mt-8 border-t border-[var(--intindi-border)] pt-4">
+        <h2 id="history-heading" className="flex items-center gap-2 font-bold">
+          <History aria-hidden="true" size={17} /> History
+        </h2>
+        <p className="mt-1 text-sm text-[var(--intindi-muted)]">Your last five excerpts and answers are saved in this browser.</p>
+        {historyError && <p role="status" className="mt-2 text-sm">{historyError}</p>}
+        {history.length > 0 && (
+          <ul className="mt-3 divide-y divide-[var(--intindi-border)] overflow-hidden rounded-xl border border-[var(--intindi-border)] bg-white">
+            {history.map(entry => (
+              <li key={entry.id} className="history-row">
+                <button
+                  type="button"
+                  disabled={!!progress}
+                  aria-pressed={current?.id === entry.id}
+                  className="pressable flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--intindi-sky)] focus-visible:outline-offset-[-3px] aria-pressed:bg-[var(--intindi-sky)] disabled:opacity-50"
+                  onClick={() => {
+                    selectExcerpt(entry.input, entry);
+                    showAnswer(true);
+                  }}
+                >
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs">{entry.input}</span>
+                  <span className="text-xs font-medium text-[var(--intindi-muted)]">{entry.result.source === "on-device" ? "On-device" : "Cloud"}</span>
+                  <ArrowRight aria-hidden="true" size={15} />
                 </button>
               </li>
             ))}
           </ul>
-        </section>
-      )}
-
-      <footer className="mt-10 text-center text-xs text-zinc-400">
-        Intindi — starter boilerplate, hindi pa ito ang final design.
-      </footer>
+        )}
+      </section>
     </main>
   );
 }

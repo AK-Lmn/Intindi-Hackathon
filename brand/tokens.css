@@ -1,0 +1,12 @@
+:root {
+  --intindi-ink: #172c69;
+  --intindi-paper: #fbf8f2;
+  --intindi-apricot: #ffc28f;
+  --intindi-sky: #e4edff;
+  --intindi-muted: #4E5C78;
+  --intindi-border: #becbe7;
+  --intindi-focus: #3158cc;
+  --intindi-sans: "Instrument Sans", system-ui, sans-serif;
+  --intindi-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --intindi-radius: 12px;
+}
