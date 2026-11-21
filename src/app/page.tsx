@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowRight, BookOpen, Braces, ChevronDown, CircleAlert, Cloud, Cpu, History, LoaderCircle, RotateCcw, ScanLine } from "lucide-react";
 import { explainInTaglish, getTutorError, getWalkthrough, maxInputLength, type ExplainProgress } from "@/lib/ai";
+import { detectCodeLanguage } from "@/lib/code-language";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { historyLimit, readHistory, writeHistory, type SavedExplanation } from "@/lib/history";
 import { Faq } from "./faq";
@@ -188,8 +189,10 @@ export default function Home() {
       .then(setAvailability, () => setAvailability("unknown"));
   }, []);
   const configured = isFirebaseConfigured();
-  const tooLong = input.trim().length > maxInputLength;
-  const canExplain = configured && !!input.trim() && !tooLong && !progress;
+  const excerptLength = input.trim().length;
+  const tooLong = excerptLength > maxInputLength;
+  const language = useMemo(() => tooLong ? null : detectCodeLanguage(input), [input, tooLong]);
+  const canExplain = configured && excerptLength > 0 && !tooLong && !progress;
   const result = current?.result;
   const walkthrough = current?.walkthrough;
 
@@ -295,9 +298,16 @@ export default function Home() {
         <section className="rounded-2xl border border-[var(--intindi-border)] bg-white">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--intindi-border)] px-4 py-3 sm:px-5">
             <label htmlFor="excerpt" className="font-bold">Code or docs</label>
-            <p id="input-limit" className="text-xs tabular-nums text-[var(--intindi-muted)]">
-              {input.trim().length.toLocaleString("en-US")} / 6,000
-            </p>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {excerptLength > 0 && !tooLong && (
+                <span id="detected-language" className="rounded-md bg-[var(--intindi-sky)] px-2 py-1 text-xs font-medium">
+                  {language ?? "No code language detected"}
+                </span>
+              )}
+              <p id="input-limit" className="text-xs tabular-nums text-[var(--intindi-muted)]">
+                {excerptLength.toLocaleString("en-US")} / {maxInputLength.toLocaleString("en-US")}
+              </p>
+            </div>
           </div>
           <div className="p-4 sm:p-5">
             <textarea
@@ -307,7 +317,7 @@ export default function Home() {
               value={input}
               disabled={!!progress}
               placeholder="Paste your snippet here…"
-              aria-describedby="input-limit cloud-note"
+              aria-describedby={excerptLength > 0 && !tooLong ? "detected-language input-limit cloud-note" : "input-limit cloud-note"}
               aria-invalid={tooLong}
               className="block min-h-40 w-full resize-y rounded-lg border border-[var(--intindi-border)] bg-[var(--intindi-paper)] p-3 font-mono text-sm leading-6 placeholder:text-[var(--intindi-muted)]"
               onChange={event => selectExcerpt(event.target.value)}

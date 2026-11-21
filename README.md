@@ -10,7 +10,7 @@ A tech tutor for Filipino dev students, built for the [KaneCLI Online Hackathon]
 
 ## How to use
 
-1. **Add a snippet.** Paste code or a docs excerpt, or select **Sample code** or **Sample docs**.
+1. **Add a snippet.** Paste code or a docs excerpt, or select **Sample code** or **Sample docs**. Intindi detects common programming languages in your browser when the syntax gives it enough context.
 2. **Get a quick answer.** Select **Explain in Taglish**. The source badge tells you where the answer was generated, and the timer shows how long it took.
 3. **Work through an example.** Select **Go deeper** while online. Click a highlighted source quote to find it in the editor, then try the practice questions before opening **Practice answers**.
 4. **Pick up where you left off.** Select a saved explanation in **History** to reopen it in the same browser.
