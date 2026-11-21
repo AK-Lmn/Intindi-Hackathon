@@ -37,7 +37,11 @@ const groups = [
       },
       {
         question: "What does Go deeper add?",
-        answer: "Go deeper sends the excerpt to Gemini in the cloud for a takeaway, source-backed steps, a worked example, and three practice questions. Open Practice answers when you’re ready to check your work.",
+        answer: "Go deeper sends the excerpt to Gemini in the cloud for line-by-line notes, source-backed steps, a worked example, and three practice questions. Line notes cover up to 16 non-blank lines. Open Practice answers when you’re ready to check your work.",
+      },
+      {
+        question: "Can I ask a follow-up question?",
+        answer: "Yes. Open Ask a follow-up after a quick explanation. Gemini replies in Taglish using the excerpt and recent answer as context. Each browser can send up to five follow-ups in five minutes. This needs internet, and the thread clears when you change excerpts or reload.",
       },
     ],
   },

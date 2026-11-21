@@ -1,10 +1,11 @@
-import type { ExplainResult } from "./ai";
+import type { ExplainResult, WalkthroughResult } from "./ai";
+import { isLineNote } from "./source-lines";
 
 export interface SavedExplanation {
   id: string;
   input: string;
   result: ExplainResult;
-  walkthrough?: ExplainResult;
+  walkthrough?: WalkthroughResult;
 }
 
 const storageKey = "intindi-explanations-v1";
@@ -25,7 +26,9 @@ function isSavedExplanation(value: unknown): value is SavedExplanation {
   return typeof entry.id === "string" && typeof entry.input === "string" &&
     isResult(entry.result) &&
     (entry.walkthrough === undefined ||
-      (isResult(entry.walkthrough) && entry.walkthrough.source === "cloud"));
+      (isResult(entry.walkthrough) && entry.walkthrough.source === "cloud" &&
+        (entry.walkthrough.lineNotes === undefined ||
+          (Array.isArray(entry.walkthrough.lineNotes) && entry.walkthrough.lineNotes.every(isLineNote)))));
 }
 
 export function readHistory(): SavedExplanation[] {

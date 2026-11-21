@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowRight, BookOpen, Braces, ChevronDown, CircleAlert, Cloud, Cpu, History, LoaderCircle, RotateCcw, ScanLine } from "lucide-react";
-import { explainInTaglish, getTutorError, getWalkthrough, maxInputLength, type ExplainProgress } from "@/lib/ai";
+import { ArrowDown, ArrowRight, BookOpen, Braces, ChevronDown, CircleAlert, Cloud, Cpu, History, LoaderCircle, MessageCircle, RotateCcw, ScanLine } from "lucide-react";
+import { explainInTaglish, getFollowUp, getTutorError, getWalkthrough, maxFollowUpLength, maxInputLength, type ExplainProgress, type FollowUpExchange, type TutorTask } from "@/lib/ai";
 import { detectCodeLanguage } from "@/lib/code-language";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { historyLimit, readHistory, writeHistory, type SavedExplanation } from "@/lib/history";
+import { getSourceLines, lineNoteLimit, type LineNote } from "@/lib/source-lines";
+import { followUpLimit, followUpLimitKey, followUpWindowMinutes, readFollowUps } from "@/lib/follow-up-limit";
 import { Faq } from "./faq";
 
 const samples = [
@@ -19,7 +21,7 @@ const samples = [
 
 const walkthroughHeadings = /^(Takeaway|Step by step|Worked example|Examples|Practice questions|Answers)[ \t]*$/m;
 
-type TutorProgress = ExplainProgress | { stage: "walkthrough" };
+type TutorProgress = ExplainProgress | { stage: "walkthrough" | "follow-up" };
 
 const loadingCopy = {
   checking: "Checking for Gemini Nano…",
@@ -27,6 +29,7 @@ const loadingCopy = {
   device: "Writing your explanation on this device…",
   cloud: "Writing your explanation with Gemini in the cloud…",
   walkthrough: "Building your walkthrough…",
+  "follow-up": "Answering your follow-up…",
 };
 
 function formatElapsed(ms: number) {
@@ -76,6 +79,54 @@ function TutorLoading({ progress, startedAt }: { progress: TutorProgress; starte
 function ExplanationText({ text }: { text: string }) {
   return text.split(/(`[^`\n]+`)/g).map((part, index) =>
     index % 2 === 1 ? <code key={index} className="rounded bg-white/65 px-1 font-mono text-[0.9em]">{part.slice(1, -1)}</code> : part,
+  );
+}
+
+function LineByLine({ excerpt, notes, onLocate }: {
+  excerpt: string;
+  notes: LineNote[];
+  onLocate: (offset: number, length: number) => void;
+}) {
+  const lines = getSourceLines(excerpt);
+  const byNumber = new Map(notes.map(note => [note.line, note.explanation]));
+  return (
+    <details className="group rounded-xl border border-[var(--intindi-border)]">
+      <summary className="pressable flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-xl px-4 text-sm font-bold hover:bg-[var(--intindi-sky)] [&::-webkit-details-marker]:hidden">
+        <span className="inline-flex items-center gap-2"><Braces aria-hidden="true" size={15} /> Line by line</span>
+        <ChevronDown aria-hidden="true" size={16} className="disclosure-chevron shrink-0 group-open:rotate-180" />
+      </summary>
+      {notes.length > 0 ? (
+        <div className="answer-enter divide-y divide-[var(--intindi-border)] border-t border-[var(--intindi-border)]">
+          {lines.length > lineNoteLimit && (
+            <p className="px-4 py-3 text-xs text-[var(--intindi-muted)]">
+              Showing the first {lineNoteLimit} non-blank lines. Paste a smaller section to go through the other lines.
+            </p>
+          )}
+          {lines.slice(0, lineNoteLimit).map(({ line, text, offset }) => {
+            const explanation = byNumber.get(line);
+            if (!explanation) return null;
+            return (
+              <div key={line} className="px-4 py-3">
+                <button
+                  type="button"
+                  aria-label={`Select line ${line} in the excerpt`}
+                  onClick={() => onLocate(offset, text.length)}
+                  className="pressable flex w-full items-start gap-3 rounded-lg bg-[var(--intindi-paper)] px-2 py-1.5 text-left font-mono text-xs leading-5 hover:bg-[var(--intindi-sky)]"
+                >
+                  <span className="w-6 shrink-0 text-right tabular-nums text-[var(--intindi-muted)]">{line}</span>
+                  <code className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</code>
+                </button>
+                <p className="mt-2 text-sm leading-6 [overflow-wrap:anywhere]"><ExplanationText text={explanation} /></p>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="border-t border-[var(--intindi-border)] px-4 py-3 text-sm text-[var(--intindi-muted)]">
+          The line notes didn’t match the excerpt closely enough. The rest of the walkthrough is still available.
+        </p>
+      )}
+    </details>
   );
 }
 
@@ -162,13 +213,32 @@ export default function Home() {
   const [progress, setProgress] = useState<TutorProgress | null>(null);
   const [startedAt, setStartedAt] = useState(0);
   const [current, setCurrent] = useState<SavedExplanation | null>(null);
-  const [error, setError] = useState<{ task: "quick" | "walkthrough"; message: string } | null>(null);
+  const [error, setError] = useState<{ task: TutorTask; message: string } | null>(null);
+  const [question, setQuestion] = useState("");
+  const [followUp, setFollowUp] = useState<FollowUpExchange | null>(null);
+  const [attempts, setAttempts] = useState<number[]>([]);
   const [history, setHistory] = useState<SavedExplanation[]>([]);
   const [historyError, setHistoryError] = useState("");
   const [availability, setAvailability] = useState("checking");
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const answerRef = useRef<HTMLElement>(null);
   const busy = progress !== null;
+  const followUpsLeft = followUpLimit - attempts.length;
+  useEffect(() => {
+    const sync = () => setAttempts(previous => readFollowUps(previous));
+    sync();
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, []);
+  useEffect(() => {
+    if (!attempts.length) return;
+    const delay = attempts[0] + followUpWindowMinutes * 60_000 - Date.now();
+    const timeout = window.setTimeout(
+      () => setAttempts(previous => readFollowUps(previous)),
+      Math.max(0, delay),
+    );
+    return () => window.clearTimeout(timeout);
+  }, [attempts]);
   useEffect(() => {
     try {
       setHistory(readHistory());
@@ -200,6 +270,8 @@ export default function Home() {
     setInput(excerpt);
     setCurrent(saved);
     setError(null);
+    setQuestion("");
+    setFollowUp(null);
   }
 
   function showAnswer(fromHistory = false) {
@@ -214,6 +286,14 @@ export default function Home() {
     if (start < 0) return;
     editorRef.current?.focus();
     editorRef.current?.setSelectionRange(start, start + quote.length);
+  }
+
+  function locateLine(offset: number, length: number) {
+    const editor = editorRef.current;
+    if (!editor || !current || editor.value.trim() !== current.input) return;
+    const start = editor.value.length - editor.value.trimStart().length + offset;
+    editor.focus();
+    editor.setSelectionRange(start, start + length);
   }
 
   function save(entry: SavedExplanation) {
@@ -237,6 +317,8 @@ export default function Home() {
     setError(null);
     setProgress({ stage: "checking" });
     setCurrent(null);
+    setQuestion("");
+    setFollowUp(null);
     showAnswer();
     try {
       const excerpt = input.trim();
@@ -267,6 +349,39 @@ export default function Home() {
       save({ ...current, walkthrough: { ...detail, durationMs: performance.now() - start } });
     } catch (cause) {
       setError({ task: "walkthrough", message: getTutorError(cause, "walkthrough", navigator.onLine) });
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  async function askFollowUp() {
+    const trimmed = question.trim();
+    if (!current || !configured || busy || !trimmed || trimmed.length > maxFollowUpLength) return;
+    const now = Date.now();
+    const recent = readFollowUps(attempts, now);
+    if (recent.length >= followUpLimit) {
+      setAttempts(recent);
+      return;
+    }
+    if (navigator.onLine) {
+      const next = [...recent, now];
+      setAttempts(next);
+      try {
+        localStorage.setItem(followUpLimitKey, JSON.stringify(next));
+      } catch {
+        // The in-memory limit still applies until the tab reloads.
+      }
+    }
+    const start = performance.now();
+    setStartedAt(start);
+    setError(null);
+    setProgress({ stage: "follow-up" });
+    try {
+      const answer = await getFollowUp(current.input, current.result.text, trimmed, followUp);
+      setFollowUp({ question: trimmed, answer: { ...answer, durationMs: performance.now() - start } });
+      setQuestion("");
+    } catch (cause) {
+      setError({ task: "follow-up", message: getTutorError(cause, "follow-up", navigator.onLine) });
     } finally {
       setProgress(null);
     }
@@ -354,8 +469,8 @@ export default function Home() {
               aria-keyshortcuts="Control+Enter Meta+Enter"
               className="pressable mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-[var(--intindi-apricot)] px-4 text-sm font-bold hover:bg-[#ffb678] disabled:opacity-50"
             >
-              {busy && progress.stage !== "walkthrough" ? "Working on your explanation…" : "Explain in Taglish"}
-              {busy && progress.stage !== "walkthrough"
+              {busy && progress.stage !== "walkthrough" && progress.stage !== "follow-up" ? "Working on your explanation…" : "Explain in Taglish"}
+              {busy && progress.stage !== "walkthrough" && progress.stage !== "follow-up"
                 ? <LoaderCircle aria-hidden="true" size={17} className="progress-icon" />
                 : <ArrowRight aria-hidden="true" size={17} />}
             </button>
@@ -408,11 +523,11 @@ export default function Home() {
                   Go deeper
                   <ArrowDown aria-hidden="true" size={16} />
                 </button>
-                <p className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">Uses Gemini in the cloud for a worked example and practice questions.</p>
+                <p className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">Uses Gemini in the cloud for line notes, a worked example, and practice questions.</p>
               </div>
             )}
-            {progress && progress.stage !== "walkthrough" && <TutorLoading progress={progress} startedAt={startedAt} />}
-            {error && (
+            {progress && progress.stage !== "walkthrough" && progress.stage !== "follow-up" && <TutorLoading progress={progress} startedAt={startedAt} />}
+            {error && error.task !== "follow-up" && (
               <div className="answer-enter mt-3 rounded-xl border border-[#efc7b8] bg-[#fff4ee] p-3 text-[#763122]">
                 <p role="alert" className="flex items-start gap-2 text-sm leading-6">
                   <CircleAlert aria-hidden="true" size={17} className="mt-1 shrink-0" />
@@ -449,8 +564,82 @@ export default function Home() {
                   <Cloud aria-hidden="true" size={14} /> Cloud
                 </span>
               </div>
+              {walkthrough.lineNotes && <LineByLine excerpt={current.input} notes={walkthrough.lineNotes} onLocate={locateLine} />}
               <WalkthroughContent text={walkthrough.text} excerpt={current.input} onLocate={locateQuote} />
             </section>
+          )}
+          {current && (
+            <details key={`follow-up-${current.id}`} className="group rounded-2xl border border-[var(--intindi-border)] bg-white">
+              <summary className="pressable flex min-h-12 cursor-pointer list-none items-center justify-between gap-2 rounded-2xl px-4 text-sm font-bold hover:bg-[var(--intindi-sky)] [&::-webkit-details-marker]:hidden">
+                <span className="inline-flex items-center gap-2"><MessageCircle aria-hidden="true" size={16} /> Ask a follow-up</span>
+                <ChevronDown aria-hidden="true" size={16} className="disclosure-chevron shrink-0 group-open:rotate-180" />
+              </summary>
+              <div className="answer-enter space-y-4 border-t border-[var(--intindi-border)] p-4">
+                {followUp && (
+                  <div aria-live="polite" className="space-y-2.5 text-sm leading-6 [overflow-wrap:anywhere]">
+                    <p className="ml-auto w-fit max-w-[90%] rounded-xl bg-[var(--intindi-paper)] px-3 py-2 font-medium">
+                      <span className="sr-only">Your question: </span>{followUp.question}
+                    </p>
+                    <div className="rounded-xl bg-[var(--intindi-sky)] p-3">
+                      <p className="whitespace-pre-wrap"><ExplanationText text={followUp.answer.text} /></p>
+                      {followUp.answer.sourceQuote && (
+                        <div className="mt-2 flex flex-wrap items-start gap-2 text-xs">
+                          <span className="font-semibold">From your excerpt</span>
+                          <code className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]">{followUp.answer.sourceQuote}</code>
+                        </div>
+                      )}
+                      {followUp.answer.missingDetail && (
+                        <p className="mt-2 text-xs"><strong>What would help:</strong> {followUp.answer.missingDetail}</p>
+                      )}
+                      <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-[var(--intindi-muted)]">
+                        <Cloud aria-hidden="true" size={13} /> Cloud
+                        {followUp.answer.durationMs !== undefined && ` · Took ${formatElapsed(followUp.answer.durationMs)}`}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                <form
+                  className="space-y-2"
+                  onSubmit={event => {
+                    event.preventDefault();
+                    void askFollowUp();
+                  }}
+                >
+                  <label htmlFor="follow-up-question" className="sr-only">Your question</label>
+                  <textarea
+                    id="follow-up-question"
+                    value={question}
+                    disabled={busy}
+                    rows={2}
+                    maxLength={maxFollowUpLength}
+                    placeholder="What part is still unclear?"
+                    aria-describedby="follow-up-privacy follow-up-limit"
+                    className="block w-full resize-y rounded-lg border border-[var(--intindi-border)] bg-[var(--intindi-paper)] p-3 text-sm"
+                    onChange={event => {
+                      setQuestion(event.target.value);
+                      if (error?.task === "follow-up") setError(null);
+                    }}
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p id="follow-up-privacy" className="text-xs leading-5 text-[var(--intindi-muted)]">
+                      Sends your question, excerpt, and recent context to Gemini.
+                    </p>
+                    <button type="submit" disabled={!configured || busy || !question.trim() || followUpsLeft === 0}
+                      className="pressable ml-auto inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-[var(--intindi-apricot)] px-3 text-sm font-bold hover:bg-[#ffb678] disabled:opacity-50">
+                      {error?.task === "follow-up" ? "Try again" : "Ask Gemini"}
+                      <ArrowRight aria-hidden="true" size={15} />
+                    </button>
+                  </div>
+                  <p id="follow-up-limit" role="status" className="text-xs text-[var(--intindi-muted)]">
+                    {followUpsLeft > 0
+                      ? `${followUpsLeft} of ${followUpLimit} follow-ups left in this ${followUpWindowMinutes}-minute window.`
+                      : "You’ve reached the follow-up limit. Try again in a few minutes."}
+                  </p>
+                </form>
+                {progress?.stage === "follow-up" && <TutorLoading progress={progress} startedAt={startedAt} />}
+                {error?.task === "follow-up" && <p role="alert" className="text-sm text-[#763122]">{error.message}</p>}
+              </div>
+            </details>
           )}
         </div>
       </div>

@@ -12,8 +12,9 @@ A tech tutor for Filipino dev students, built for the [KaneCLI Online Hackathon]
 
 1. **Add a snippet.** Paste code or a docs excerpt, or select **Sample code** or **Sample docs**. Intindi detects common programming languages in your browser when the syntax gives it enough context.
 2. **Get a quick answer.** Select **Explain in Taglish**. The source badge tells you where the answer was generated, and the timer shows how long it took.
-3. **Work through an example.** Select **Go deeper** while online. Click a highlighted source quote to find it in the editor, then try the practice questions before opening **Practice answers**.
-4. **Pick up where you left off.** Select a saved explanation in **History** to reopen it in the same browser.
+3. **Work through an example.** Select **Go deeper** while online. Open **Line by line** for a Taglish note on each of the first 16 non-blank lines. Select a line or a highlighted source quote to find it in the editor, then try the practice questions before opening **Practice answers**.
+4. **Ask a follow-up.** While online, open **Ask a follow-up** and ask about the current snippet. Gemini gets your question, excerpt, and recent answer context. The thread clears when you change excerpts or reload.
+5. **Pick up where you left off.** Select a saved explanation in **History** to reopen it in the same browser.
 
 ### Try it offline
 
@@ -35,6 +36,7 @@ Open the app in compatible desktop Chrome while online. If Gemini Nano needs a f
 ## Input & Storage Limits
 
 - Pasted text only, up to **6,000 characters** per request. Intindi does not fetch links or read files and screenshots.
+- Follow-ups allow up to **five requests per five minutes** in the browser. The local cap is a usage guardrail. Firebase App Check and Firebase AI Logic quotas protect the cloud API.
 - The latest **five** excerpts and their answers are saved in this browser’s site data. Saved walkthroughs can be reopened offline while the app is loaded. History does not sync across devices.
 
 ## Architecture
