@@ -80,3 +80,25 @@
     animation: none;
   }
 }
+
+::selection {
+  color: var(--intindi-ink);
+  background: var(--intindi-apricot);
+}
+
+textarea {
+  caret-color: var(--intindi-focus);
+}
+
+.workspace-panel {
+  box-shadow: 0 3px 10px rgb(23 44 105 / 5%);
+}
+
+[data-tour-highlight]:not(:focus-visible) {
+  outline: 2px solid var(--intindi-focus);
+  outline-offset: 2px;
+}
+
+button[data-tour-highlight]:disabled {
+  opacity: 0.75;
+}

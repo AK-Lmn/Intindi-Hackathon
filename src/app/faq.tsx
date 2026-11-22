@@ -81,11 +81,18 @@ const groups = [
   },
 ];
 
-export function Faq() {
+export function Faq({ expanded, onToggle, onReplayTour }: { expanded: boolean; onToggle: () => void; onReplayTour: () => void }) {
   return (
-    <section id="faq" aria-labelledby="faq-heading" className="mt-10 scroll-mt-4 border-t border-[var(--intindi-border)] pt-5">
-      <h2 id="faq-heading" className="text-xl font-bold">Frequently asked questions</h2>
-      <div className="mt-4 grid gap-x-6 gap-y-5 lg:grid-cols-2">
+    <section id="faq" aria-labelledby="faq-heading" className="mt-8 scroll-mt-16 border-t lg:mt-10 lg:scroll-mt-4 border-[var(--intindi-border)] pt-5">
+      <h2 id="faq-heading" className="text-xl font-bold">
+        <span className="hidden lg:inline">Frequently asked questions</span>
+        <button type="button" aria-expanded={expanded} aria-controls="faq-content" onClick={onToggle}
+          className="pressable flex min-h-11 w-full items-center justify-between gap-3 rounded-lg text-left text-base lg:hidden">
+          Frequently asked questions
+          <ChevronDown aria-hidden="true" size={18} className={`disclosure-chevron shrink-0 ${expanded ? "rotate-180" : ""}`} />
+        </button>
+      </h2>
+      <div id="faq-content" className={`mt-4 gap-x-6 gap-y-5 lg:grid lg:grid-cols-2 ${expanded ? "grid" : "hidden"}`}>
         {groups.map(group => (
           <div key={group.title}>
             <h3 className="mb-2 text-sm font-bold">{group.title}</h3>
@@ -103,6 +110,7 @@ export function Faq() {
           </div>
         ))}
       </div>
+      <button type="button" onClick={onReplayTour} className="pressable mt-2 min-h-11 rounded-lg px-2 text-sm font-semibold underline underline-offset-4">Replay tour</button>
     </section>
   );
 }

@@ -21,9 +21,16 @@ const samples = [
   },
 ];
 
+const tourStorageKey = "intindi-tour-v1";
+const tourSteps = [
+  { title: "Try a sample", text: "Choose Sample code or Sample docs below, or paste your own excerpt." },
+  { title: "Get a Taglish explanation", text: "Select Explain in Taglish. The Answer shows whether Gemini ran on your device or in the cloud. Nano may need a one-time download." },
+  { title: "Ask about what’s unclear", text: "Use Go deeper for a walkthrough and quiz, or Ask a follow-up for a specific question." },
+];
+
 const walkthroughHeadings = /^(Takeaway|Step by step|Worked example|Examples|Practice questions|Answers)[ \t]*$/m;
 
-type TutorProgress = ExplainProgress | { stage: "walkthrough" | "follow-up" };
+type TutorProgress = ExplainProgress | { stage: "download"; percent?: undefined } | { stage: "walkthrough" | "follow-up" };
 
 const loadingCopy = {
   checking: "Checking for Gemini Nano…",
@@ -66,10 +73,10 @@ function TutorLoading({ progress, startedAt, onCancel }: {
       {downloading ? (
         <>
           <div className="mt-2 flex items-center gap-2">
-            <progress aria-label="Gemini Nano download" value={progress.percent} max={100} className="h-2 min-w-0 flex-1 accent-[var(--intindi-focus)]" />
-            <span aria-hidden="true" className="text-xs tabular-nums">{progress.percent}%</span>
+            <progress aria-label="Gemini Nano download" value={progress.percent} max={100} className="h-3 min-w-0 flex-1 accent-[var(--intindi-focus)]" />
+            {progress.percent !== undefined && <span aria-hidden="true" className="min-w-8 text-right text-xs font-semibold tabular-nums">{progress.percent}%</span>}
           </div>
-          <p className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">The first download can take a few minutes. Keep this tab open.</p>
+          <p className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">First download can take a few minutes. Stay online and keep this tab open.</p>
         </>
       ) : (
         <div aria-hidden="true" className="mt-3 space-y-2">
@@ -102,7 +109,7 @@ function LineByLine({ excerpt, notes, onLocate }: {
   return (
     <details className="group rounded-xl border border-[var(--intindi-border)]">
       <summary className="pressable flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-xl px-4 text-sm font-bold hover:bg-[var(--intindi-sky)] [&::-webkit-details-marker]:hidden">
-        <span className="inline-flex items-center gap-2"><Braces aria-hidden="true" size={15} /> Line by line</span>
+        <span className="inline-flex items-center gap-1.5 sm:gap-2"><Braces aria-hidden="true" size={15} /> Line by line</span>
         <ChevronDown aria-hidden="true" size={16} className="disclosure-chevron shrink-0 group-open:rotate-180" />
       </summary>
       {notes.length > 0 ? (
@@ -223,6 +230,9 @@ function WalkthroughContent({ text, excerpt, onLocate, showPractice }: {
 export default function Home() {
   const [input, setInput] = useState("");
   const [expandedEditor, setExpandedEditor] = useState(false);
+  const [faqExpanded, setFaqExpanded] = useState(false);
+  const [tourStep, setTourStep] = useState<number | null>(null);
+  const [mobileView, setMobileView] = useState<"code" | "answer">("code");
   const [progress, setProgress] = useState<TutorProgress | null>(null);
   const [startedAt, setStartedAt] = useState(0);
   const [current, setCurrent] = useState<SavedExplanation | null>(null);
@@ -236,11 +246,48 @@ export default function Home() {
   const [confirmClear, setConfirmClear] = useState(false);
   const [availability, setAvailability] = useState("checking");
   const editorRef = useRef<HTMLTextAreaElement>(null);
-  const editorPanelRef = useRef<HTMLElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const mobileAnswerButtonRef = useRef<HTMLButtonElement>(null);
   const answerRef = useRef<HTMLElement>(null);
   const requestRef = useRef<AbortController | null>(null);
   const busy = progress !== null;
   const followUpsLeft = followUpLimit - attempts.length;
+  const tour = tourStep === null ? null : tourSteps[tourStep];
+  const tourRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem(tourStorageKey)) setTourStep(0);
+    } catch {
+      // Storage may be unavailable. The tour can still be replayed.
+    }
+  }, []);
+
+  function dismissTour() {
+    setTourStep(null);
+    try {
+      localStorage.setItem(tourStorageKey, "seen");
+    } catch {
+      // The current session still dismisses the tour.
+    }
+  }
+
+  function replayTour() {
+    setTourStep(0);
+    setMobileView("code");
+    requestAnimationFrame(() => {
+      tourRef.current?.focus({ preventScroll: true });
+      scrollToPanel(tourRef.current);
+    });
+  }
+  useEffect(() => {
+    function openLinkedFaq() {
+      if (window.location.hash === "#faq") setFaqExpanded(true);
+    }
+    openLinkedFaq();
+    window.addEventListener("hashchange", openLinkedFaq);
+    return () => window.removeEventListener("hashchange", openLinkedFaq);
+  }, []);
   useEffect(() => {
     const sync = () => setAttempts(previous => readFollowUps(previous));
     sync();
@@ -299,7 +346,12 @@ export default function Home() {
   }
 
   function showAnswer(fromHistory = false) {
-    if (fromHistory || window.matchMedia("(width < 64rem)").matches) {
+    setMobileView("answer");
+    if (window.matchMedia("(width < 64rem)").matches) {
+      mobileAnswerButtonRef.current?.focus({ preventScroll: true });
+      scrollToPanel(workspaceRef.current);
+    } else if (fromHistory) {
+      answerRef.current?.focus({ preventScroll: true });
       scrollToPanel(answerRef.current);
     }
   }
@@ -331,19 +383,26 @@ export default function Home() {
     setProgress(null);
   }
 
+  function selectSource(start: number, end: number) {
+    setMobileView("code");
+    requestAnimationFrame(() => {
+      editorRef.current?.focus({ preventScroll: true });
+      editorRef.current?.setSelectionRange(start, end);
+      scrollToPanel(workspaceRef.current);
+    });
+  }
+
   function locateQuote(quote: string) {
     const start = input.indexOf(quote);
     if (start < 0) return;
-    editorRef.current?.focus();
-    editorRef.current?.setSelectionRange(start, start + quote.length);
+    selectSource(start, start + quote.length);
   }
 
   function locateLine(offset: number, length: number) {
     const editor = editorRef.current;
     if (!editor || !current || editor.value.trim() !== current.input) return;
     const start = editor.value.length - editor.value.trimStart().length + offset;
-    editor.focus();
-    editor.setSelectionRange(start, start + length);
+    selectSource(start, start + length);
   }
 
   function save(entry: SavedExplanation) {
@@ -381,7 +440,8 @@ export default function Home() {
       return;
     }
     if (!configured) return;
-    const { request, start } = startRequest({ stage: "checking" });
+    const expectsDownload = navigator.onLine && (availability === "downloadable" || availability === "downloading");
+    const { request, start } = startRequest(expectsDownload ? { stage: "download" } : { stage: "checking" });
     setCurrent(null);
     setFromHistory(false);
     setQuestion("");
@@ -391,7 +451,7 @@ export default function Home() {
       const excerpt = input.trim();
       const explanation = await explainInTaglish(excerpt, update => {
         if (request.signal.aborted) return;
-        setProgress(update);
+        if (update.stage !== "checking" || !expectsDownload) setProgress(update);
         if (update.stage === "device") setAvailability("available");
       }, request.signal);
       if (request.signal.aborted) return;
@@ -453,20 +513,20 @@ export default function Home() {
   }
 
   return (
-    <main className="mx-auto max-w-[82rem] px-4 pb-14 sm:px-8 lg:px-12">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--intindi-border)] py-4">
-        <img src="/intindi.svg" width={112} height={31} alt="Intindi" />
-        <div className="flex flex-wrap items-center gap-4 text-xs font-semibold text-[var(--intindi-muted)]">
-          <p role="status" className="inline-flex items-center gap-2">
+    <main className="mx-auto max-w-[82rem] px-3 pb-14 sm:px-8 lg:px-12">
+      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-[var(--intindi-border)] py-2 sm:py-4">
+        <img src="/intindi.svg" width={112} height={31} alt="Intindi" className="w-24 sm:w-28" />
+        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold sm:gap-4 text-[var(--intindi-muted)]">
+          <p role="status" className="inline-flex items-center gap-1.5 sm:gap-2">
             <Cpu aria-hidden="true" size={16} />
-            Gemini Nano: {availability}
+            <span className="sm:hidden" aria-hidden="true">{availability === "Prompt API unavailable" ? "Nano unavailable" : `Nano: ${availability}`}</span><span className="sr-only sm:not-sr-only">Gemini Nano: {availability}</span>
           </p>
-          <a href="#faq" className="rounded-sm px-1 py-2 underline underline-offset-4 hover:text-[var(--intindi-focus)]">FAQ</a>
+          <a href="#faq" onClick={() => setFaqExpanded(true)} className="inline-flex min-h-11 items-center rounded-sm px-2 underline underline-offset-4 hover:text-[var(--intindi-focus)]">FAQ</a>
         </div>
       </header>
 
-      <div className="py-7 sm:py-10">
-        <h1 className="text-balance text-3xl leading-tight font-bold tracking-[-0.045em] sm:text-5xl">
+      <div className="pb-5 pt-6 sm:pb-9 sm:pt-10">
+        <h1 className="text-balance text-[clamp(1.875rem,6vw,3rem)] leading-[1.08] font-bold tracking-[-0.04em]">
           Understand code in Taglish.
         </h1>
         <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--intindi-muted)] sm:text-base">
@@ -474,14 +534,56 @@ export default function Home() {
         </p>
       </div>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.12fr)_minmax(0,1fr)] lg:gap-6">
-        <section ref={editorPanelRef} tabIndex={-1} aria-label="Code editor" className="scroll-mt-4 rounded-2xl border border-[var(--intindi-border)] bg-white">
+      {tour && tourStep !== null && (
+        <section ref={tourRef} tabIndex={-1} aria-labelledby="tour-heading"
+          className="mb-3 scroll-mt-16 rounded-xl border border-[var(--intindi-border)] bg-white px-3 py-2 sm:mb-4 sm:px-4">
+          <div className="flex flex-wrap items-center justify-between gap-x-4">
+            <div className="min-w-0 flex-1 py-1" aria-live="polite">
+              <p className="text-xs font-semibold text-[var(--intindi-muted)]">Quick tour · {tourStep + 1} of {tourSteps.length}</p>
+              <h2 id="tour-heading" className="mt-1 text-sm font-bold">{tour.title}</h2>
+              <p className="mt-1 text-sm leading-5 text-[var(--intindi-muted)]">{tourStep === 2 && !result ? "Your explanation appears here. After it loads, try Go deeper or Ask a follow-up." : tour.text}</p>
+            </div>
+            <div className="flex items-center gap-1">
+              <button type="button" onClick={dismissTour} className="pressable min-h-11 rounded-lg px-3 text-sm underline underline-offset-2">Skip</button>
+              <button type="button" onClick={() => {
+                if (tourStep === tourSteps.length - 1) {
+                  dismissTour();
+                } else {
+                  const nextStep = tourStep + 1;
+                  setTourStep(nextStep);
+                  setMobileView(nextStep === 2 ? "answer" : "code");
+                }
+              }}
+                className="pressable min-h-11 rounded-lg bg-[var(--intindi-sky)] px-3 text-sm font-bold hover:bg-[var(--intindi-border)]">
+                {tourStep === tourSteps.length - 1 ? "Done" : "Next"}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <nav aria-label="Workspace view"
+        className="sticky top-0 z-10 mb-3 grid grid-cols-2 gap-1 rounded-xl border border-[var(--intindi-border)] bg-[var(--intindi-paper)] p-1 lg:hidden">
+        <button type="button" aria-pressed={mobileView === "code"} aria-controls="code-panel"
+          className="pressable min-h-11 rounded-lg text-sm font-semibold aria-pressed:bg-[var(--intindi-ink)] aria-pressed:text-white"
+          onClick={() => { setMobileView("code"); scrollToPanel(workspaceRef.current); }}>
+          Code
+        </button>
+        <button ref={mobileAnswerButtonRef} type="button" aria-pressed={mobileView === "answer"} aria-controls="answer-panel"
+          className="pressable min-h-11 rounded-lg text-sm font-semibold aria-pressed:bg-[var(--intindi-ink)] aria-pressed:text-white"
+          onClick={() => { setMobileView("answer"); scrollToPanel(workspaceRef.current); }}>
+          Answer
+        </button>
+      </nav>
+
+      <div ref={workspaceRef} className="grid scroll-mt-16 items-start gap-4 lg:grid-cols-[minmax(0,1.12fr)_minmax(0,1fr)] lg:gap-6">
+        <section id="code-panel" aria-label="Code editor" className={`workspace-panel min-w-0 rounded-2xl border border-[var(--intindi-border)] bg-white lg:block ${mobileView === "code" ? "" : "hidden"}`}>
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--intindi-border)] px-4 py-3 sm:px-5">
             <label htmlFor="excerpt" className="font-bold">Code or docs</label>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {excerptLength > 0 && !tooLong && (
                 <span id="detected-language" className="rounded-md bg-[var(--intindi-sky)] px-2 py-1 text-xs font-medium">
-                  {language ?? "No code language detected"}
+                  {language ?? "Unknown language"}
                 </span>
               )}
               <p id="input-limit" className="text-xs tabular-nums text-[var(--intindi-muted)]">
@@ -508,21 +610,22 @@ export default function Home() {
                 }
               }}
             />
-            <div className="mt-2 flex flex-wrap gap-1">
+            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0">
               <button type="button" aria-expanded={expandedEditor} aria-controls="excerpt"
                 onClick={() => setExpandedEditor(!expandedEditor)}
-                className="pressable min-h-11 rounded-lg px-2.5 text-xs font-semibold hover:bg-[var(--intindi-sky)] lg:hidden">
+                className="pressable min-h-11 rounded-lg px-2 text-xs font-semibold hover:bg-[var(--intindi-sky)] lg:hidden">
                 {expandedEditor ? "Compact editor" : "Expand editor"}
               </button>
               {samples.map(({ label, icon: Icon, excerpt }) => (
                 <button
                   key={label}
+                  data-tour-highlight={tourStep === 0 && label === "Sample code" ? "" : undefined}
                   type="button"
                   disabled={!!progress}
-                  className="pressable inline-flex min-h-10 items-center gap-2 rounded-lg px-2.5 text-xs font-semibold hover:bg-[var(--intindi-sky)] disabled:opacity-50"
+                  className="pressable inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold hover:bg-[var(--intindi-sky)] disabled:opacity-50"
                   onClick={() => {
                     selectExcerpt(excerpt);
-                    editorRef.current?.focus({ preventScroll: true });
+                    if (window.matchMedia("(pointer: fine)").matches) editorRef.current?.focus({ preventScroll: true });
                   }}
                 >
                   <Icon aria-hidden="true" size={15} />
@@ -535,9 +638,10 @@ export default function Home() {
             <button
               type="button"
               onClick={() => void explain()}
+              data-tour-highlight={tourStep === 1 ? "" : undefined}
               disabled={!canExplain}
               aria-keyshortcuts="Control+Enter Meta+Enter"
-              className="pressable mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-[var(--intindi-apricot)] px-4 text-sm font-bold hover:bg-[#ffb678] disabled:opacity-50"
+              className="pressable mt-2 flex min-h-12 sm:mt-3 w-full items-center justify-center gap-2 rounded-lg bg-[var(--intindi-apricot)] px-4 text-sm font-bold hover:bg-[#ffb678] disabled:opacity-50"
             >
               {busy && progress.stage !== "walkthrough" && progress.stage !== "follow-up"
                 ? "Working on your explanation…"
@@ -547,7 +651,7 @@ export default function Home() {
                 : <ArrowRight aria-hidden="true" size={17} />}
             </button>
             <p id="cloud-note" className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">
-              If Nano is unavailable, Intindi sends your excerpt to Gemini in the cloud.
+              Runs on your device when Nano is available. Otherwise, sends your excerpt to Gemini in the cloud.
             </p>
             {(availability === "downloadable" || availability === "downloading") && !busy && (
               <p className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">
@@ -557,18 +661,13 @@ export default function Home() {
           </div>
         </section>
 
-        <div className="min-w-0 space-y-4">
+        <div id="answer-panel" className={`min-w-0 space-y-4 lg:block ${mobileView === "answer" ? "" : "hidden"}`}>
           <section
-            ref={answerRef}
+            ref={answerRef} tabIndex={-1}
             aria-labelledby="answer-heading"
-            className="min-h-48 scroll-mt-4 rounded-2xl border border-[var(--intindi-border)] bg-[var(--intindi-sky)] p-4 sm:p-5"
+            data-tour-highlight={tourStep === 2 && !result ? "" : undefined}
+            className="workspace-panel min-h-36 scroll-mt-4 sm:min-h-48 rounded-2xl border border-[var(--intindi-border)] bg-[var(--intindi-sky)] p-4 sm:p-5"
           >
-            <button type="button" onClick={() => {
-              editorPanelRef.current?.focus({ preventScroll: true });
-              scrollToPanel(editorPanelRef.current);
-            }} className="pressable mb-2 inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-xs font-semibold lg:hidden">
-              <ArrowRight aria-hidden="true" size={15} className="rotate-180" /> Back to code
-            </button>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 id="answer-heading" className="font-bold">Quick explanation</h2>
               {result && (
@@ -584,7 +683,7 @@ export default function Home() {
                   <ExplanationText text={result.text} />
                 </p>
               ) : !progress && !error && (
-                <p className="text-sm leading-6 text-[var(--intindi-muted)]">Paste a snippet or choose a sample to get started.</p>
+                <p className="text-sm leading-6 text-[var(--intindi-muted)]">Your Taglish explanation will appear here.</p>
               )}
             </div>
             {fromHistory && result ? (
@@ -606,6 +705,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={goDeeper}
+                  data-tour-highlight={tourStep === 2 ? "" : undefined}
                   disabled={!!progress}
                   className="pressable inline-flex min-h-11 items-center gap-2 rounded-lg border border-[var(--intindi-focus)] px-3 text-sm font-bold hover:bg-white disabled:opacity-50"
                 >
@@ -668,8 +768,8 @@ export default function Home() {
           )}
           {current && (
             <details key={`follow-up-${current.id}`} className="group scroll-mt-4 rounded-2xl border border-[var(--intindi-border)] bg-white">
-              <summary className="pressable flex min-h-12 cursor-pointer list-none items-center justify-between gap-2 rounded-2xl px-4 text-sm font-bold hover:bg-[var(--intindi-sky)] [&::-webkit-details-marker]:hidden">
-                <span className="inline-flex items-center gap-2"><MessageCircle aria-hidden="true" size={16} /> Ask a follow-up</span>
+              <summary data-tour-highlight={tourStep === 2 ? "" : undefined} className="pressable flex min-h-12 cursor-pointer list-none items-center justify-between gap-2 rounded-2xl px-4 text-sm font-bold hover:bg-[var(--intindi-sky)] [&::-webkit-details-marker]:hidden">
+                <span className="inline-flex items-center gap-1.5 sm:gap-2"><MessageCircle aria-hidden="true" size={16} /> Ask a follow-up</span>
                 <ChevronDown aria-hidden="true" size={16} className="disclosure-chevron shrink-0 group-open:rotate-180" />
               </summary>
               <div className="answer-enter space-y-4 border-t border-[var(--intindi-border)] p-4">
@@ -793,7 +893,7 @@ export default function Home() {
           </ul>
         )}
       </section>
-      <Faq />
+      <Faq expanded={faqExpanded} onToggle={() => setFaqExpanded(open => !open)} onReplayTour={replayTour} />
     </main>
   );
 }
