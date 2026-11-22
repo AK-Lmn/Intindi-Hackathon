@@ -8,7 +8,7 @@ const groups = [
     items: [
       {
         question: "Which programming languages can I use?",
-        answer: "Paste any programming language as plain text. Intindi recognizes common code languages in your browser and may leave short or ambiguous snippets unidentified. You can still ask for an explanation when no language is detected.",
+        answer: "Paste any programming language as plain text. Intindi recognizes common code languages in your browser and may leave short or ambiguous snippets unidentified. If the badge is unclear, wrap your excerpt in a labeled code fence like ```python. You can still ask for an explanation without a language badge.",
       },
       {
         question: "Can I paste incomplete or broken code?",
