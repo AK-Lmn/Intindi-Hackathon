@@ -119,7 +119,11 @@ export async function explainInTaglish(
       const opening = language
         ? `Simulan ang sagot sa eksaktong mga salitang "${language} code ito". Ito dapat ang unang mga salita. Walang quote, Markdown, o anumang salita bago nito. Ituloy agad ang paliwanag sa parehong pangungusap.`
         : languageInstruction;
-      return readResult(await device.generateContent(prompt(opening)), "on-device");
+      try {
+        return readResult(await device.generateContent(prompt(opening)), "on-device");
+      } catch {
+        // An unhandled execution error or mid-stream abort falls through to the online fallback.
+      }
     }
   }
 
