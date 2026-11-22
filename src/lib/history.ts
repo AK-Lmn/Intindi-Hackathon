@@ -6,6 +6,7 @@ export interface SavedExplanation {
   input: string;
   result: ExplainResult;
   walkthrough?: WalkthroughResult;
+  quizBest?: number;
 }
 
 const storageKey = "intindi-explanations-v1";

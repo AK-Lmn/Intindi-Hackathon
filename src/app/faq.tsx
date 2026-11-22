@@ -62,7 +62,7 @@ const groups = [
       },
       {
         question: "Where is history saved? Can I remove it?",
-        answer: `Intindi saves the last ${historyLimit} excerpts and answers, including completed walkthroughs, in this browser’s site data. History does not sync across devices. Clear this site’s data in your browser settings to remove it.`,
+        answer: `Intindi saves the last ${historyLimit} excerpts and answers, including completed walkthroughs and quiz scores, in this browser’s site data. History does not sync across devices. Select Clear history and confirm to remove it.`,
       },
     ],
   },

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowRight, BookOpen, Braces, ChevronDown, CircleAlert, Cloud, Cpu, History, LoaderCircle, MessageCircle, RotateCcw, ScanLine } from "lucide-react";
+import { ArrowDown, ArrowRight, BookOpen, Braces, ChevronDown, CircleAlert, Cloud, Cpu, History, LoaderCircle, MessageCircle, RotateCcw, ScanLine, Trash2 } from "lucide-react";
 import { explainInTaglish, getFollowUp, getTutorError, getWalkthrough, maxFollowUpLength, maxInputLength, type ExplainProgress, type FollowUpExchange, type TutorTask } from "@/lib/ai";
 import { detectCodeLanguage } from "@/lib/code-language";
 import { isFirebaseConfigured } from "@/lib/firebase";
@@ -9,6 +9,8 @@ import { historyLimit, readHistory, writeHistory, type SavedExplanation } from "
 import { getSourceLines, lineNoteLimit, type LineNote } from "@/lib/source-lines";
 import { followUpLimit, followUpLimitKey, followUpWindowMinutes, readFollowUps } from "@/lib/follow-up-limit";
 import { Faq } from "./faq";
+import { MiniQuiz } from "./mini-quiz";
+import { isQuiz } from "@/lib/quiz";
 
 const samples = [
   { label: "Sample code", icon: Braces, excerpt: "[10, 20, 30].reduce((sum, price) => sum + price, 0);" },
@@ -37,7 +39,11 @@ function formatElapsed(ms: number) {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-function TutorLoading({ progress, startedAt }: { progress: TutorProgress; startedAt: number }) {
+function TutorLoading({ progress, startedAt, onCancel }: {
+  progress: TutorProgress;
+  startedAt: number;
+  onCancel: () => void;
+}) {
   const [elapsed, setElapsed] = useState(0);
   const downloading = progress.stage === "download";
   useEffect(() => {
@@ -72,6 +78,10 @@ function TutorLoading({ progress, startedAt }: { progress: TutorProgress; starte
         </div>
       )}
       {!downloading && elapsed >= 12_000 && <p role="status" className="mt-2 text-xs text-[var(--intindi-muted)]">Still working. This is taking a little longer than usual.</p>}
+      <button type="button" onClick={onCancel}
+        className="pressable mt-1 min-h-11 rounded-md px-2 text-xs font-semibold underline underline-offset-2">
+        Stop waiting
+      </button>
     </div>
   );
 }
@@ -130,10 +140,11 @@ function LineByLine({ excerpt, notes, onLocate }: {
   );
 }
 
-function WalkthroughContent({ text, excerpt, onLocate }: {
+function WalkthroughContent({ text, excerpt, onLocate, showPractice }: {
   text: string;
   excerpt: string;
   onLocate: (quote: string) => void;
+  showPractice: boolean;
 }) {
   const [intro, ...parts] = text.split(walkthroughHeadings);
   return (
@@ -141,6 +152,7 @@ function WalkthroughContent({ text, excerpt, onLocate }: {
       {intro.trim() && <p className="whitespace-pre-wrap"><ExplanationText text={intro.trim()} /></p>}
       {parts.map((heading, index) => {
         if (index % 2) return null;
+        if (!showPractice && (heading === "Practice questions" || heading === "Answers")) return null;
         const body = parts[index + 1]?.trim();
         if (!body) return null;
         const items = body.split(/(?:^|\n)[ \t]*\d+\.[ \t]+/);
@@ -210,18 +222,23 @@ function WalkthroughContent({ text, excerpt, onLocate }: {
 
 export default function Home() {
   const [input, setInput] = useState("");
+  const [expandedEditor, setExpandedEditor] = useState(false);
   const [progress, setProgress] = useState<TutorProgress | null>(null);
   const [startedAt, setStartedAt] = useState(0);
   const [current, setCurrent] = useState<SavedExplanation | null>(null);
+  const [fromHistory, setFromHistory] = useState(false);
   const [error, setError] = useState<{ task: TutorTask; message: string } | null>(null);
   const [question, setQuestion] = useState("");
   const [followUp, setFollowUp] = useState<FollowUpExchange | null>(null);
   const [attempts, setAttempts] = useState<number[]>([]);
   const [history, setHistory] = useState<SavedExplanation[]>([]);
   const [historyError, setHistoryError] = useState("");
+  const [confirmClear, setConfirmClear] = useState(false);
   const [availability, setAvailability] = useState("checking");
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const editorPanelRef = useRef<HTMLElement>(null);
   const answerRef = useRef<HTMLElement>(null);
+  const requestRef = useRef<AbortController | null>(null);
   const busy = progress !== null;
   const followUpsLeft = followUpLimit - attempts.length;
   useEffect(() => {
@@ -262,13 +279,20 @@ export default function Home() {
   const excerptLength = input.trim().length;
   const tooLong = excerptLength > maxInputLength;
   const language = useMemo(() => tooLong ? null : detectCodeLanguage(input), [input, tooLong]);
-  const canExplain = configured && excerptLength > 0 && !tooLong && !progress;
+  const savedMatch = history.find(entry => entry.input === input.trim() && entry.walkthrough)
+    ?? history.find(entry => entry.input === input.trim());
+  const canExplain = (configured || !!savedMatch) && excerptLength > 0 && !tooLong && !progress;
   const result = current?.result;
   const walkthrough = current?.walkthrough;
+  const quiz = current && isQuiz(walkthrough?.quiz, current.input) ? walkthrough.quiz : undefined;
+  const bestScore = current ? Math.max(-1, ...history
+    .filter(entry => entry.input === current.input)
+    .map(entry => entry.quizBest ?? -1)) : -1;
 
   function selectExcerpt(excerpt: string, saved: SavedExplanation | null = null) {
     setInput(excerpt);
     setCurrent(saved);
+    setFromHistory(!!saved);
     setError(null);
     setQuestion("");
     setFollowUp(null);
@@ -276,9 +300,35 @@ export default function Home() {
 
   function showAnswer(fromHistory = false) {
     if (fromHistory || window.matchMedia("(width < 64rem)").matches) {
-      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      answerRef.current?.scrollIntoView({ block: "nearest", behavior: reduceMotion ? "instant" : "smooth" });
+      scrollToPanel(answerRef.current);
     }
+  }
+
+  function scrollToPanel(panel: HTMLElement | null) {
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    panel?.scrollIntoView({ block: "start", behavior: reduceMotion ? "instant" : "smooth" });
+  }
+
+  function startRequest(stage: TutorProgress) {
+    const request = new AbortController();
+    requestRef.current = request;
+    const start = performance.now();
+    setStartedAt(start);
+    setError(null);
+    setProgress(stage);
+    return { request, start };
+  }
+
+  function finishRequest(request: AbortController) {
+    if (requestRef.current !== request) return;
+    requestRef.current = null;
+    setProgress(null);
+  }
+
+  function stopWaiting() {
+    requestRef.current?.abort();
+    requestRef.current = null;
+    setProgress(null);
   }
 
   function locateQuote(quote: string) {
@@ -310,53 +360,70 @@ export default function Home() {
     }
   }
 
-  async function explain() {
-    if (!canExplain) return;
-    const start = performance.now();
-    setStartedAt(start);
-    setError(null);
-    setProgress({ stage: "checking" });
+  function clearHistory() {
+    if (busy) return;
+    try {
+      writeHistory([]);
+      setHistory([]);
+      setHistoryError("");
+      setConfirmClear(false);
+      selectExcerpt(input);
+    } catch {
+      setHistoryError("Could not clear saved history. Try again or clear this site’s data in your browser settings.");
+    }
+  }
+
+  async function explain(fresh = false) {
+    if (!canExplain || requestRef.current) return;
+    if (savedMatch && !fresh) {
+      selectExcerpt(input, savedMatch);
+      showAnswer();
+      return;
+    }
+    if (!configured) return;
+    const { request, start } = startRequest({ stage: "checking" });
     setCurrent(null);
+    setFromHistory(false);
     setQuestion("");
     setFollowUp(null);
     showAnswer();
     try {
       const excerpt = input.trim();
       const explanation = await explainInTaglish(excerpt, update => {
+        if (request.signal.aborted) return;
         setProgress(update);
         if (update.stage === "device") setAvailability("available");
-      });
+      }, request.signal);
+      if (request.signal.aborted) return;
       save({
         id: crypto.randomUUID(),
         input: excerpt,
         result: { ...explanation, durationMs: performance.now() - start },
       });
     } catch (cause) {
-      setError({ task: "quick", message: getTutorError(cause, "quick", navigator.onLine) });
+      if (!request.signal.aborted) setError({ task: "quick", message: getTutorError(cause, "quick", navigator.onLine) });
     } finally {
-      setProgress(null);
+      finishRequest(request);
     }
   }
 
   async function goDeeper() {
-    if (!current || busy) return;
-    const start = performance.now();
-    setStartedAt(start);
-    setError(null);
-    setProgress({ stage: "walkthrough" });
+    if (!current || requestRef.current) return;
+    const { request, start } = startRequest({ stage: "walkthrough" });
     try {
       const detail = await getWalkthrough(current.input);
+      if (request.signal.aborted) return;
       save({ ...current, walkthrough: { ...detail, durationMs: performance.now() - start } });
     } catch (cause) {
-      setError({ task: "walkthrough", message: getTutorError(cause, "walkthrough", navigator.onLine) });
+      if (!request.signal.aborted) setError({ task: "walkthrough", message: getTutorError(cause, "walkthrough", navigator.onLine) });
     } finally {
-      setProgress(null);
+      finishRequest(request);
     }
   }
 
   async function askFollowUp() {
     const trimmed = question.trim();
-    if (!current || !configured || busy || !trimmed || trimmed.length > maxFollowUpLength) return;
+    if (!current || !configured || requestRef.current || !trimmed || trimmed.length > maxFollowUpLength) return;
     const now = Date.now();
     const recent = readFollowUps(attempts, now);
     if (recent.length >= followUpLimit) {
@@ -372,18 +439,16 @@ export default function Home() {
         // The in-memory limit still applies until the tab reloads.
       }
     }
-    const start = performance.now();
-    setStartedAt(start);
-    setError(null);
-    setProgress({ stage: "follow-up" });
+    const { request, start } = startRequest({ stage: "follow-up" });
     try {
       const answer = await getFollowUp(current.input, current.result.text, trimmed, followUp);
+      if (request.signal.aborted) return;
       setFollowUp({ question: trimmed, answer: { ...answer, durationMs: performance.now() - start } });
       setQuestion("");
     } catch (cause) {
-      setError({ task: "follow-up", message: getTutorError(cause, "follow-up", navigator.onLine) });
+      if (!request.signal.aborted) setError({ task: "follow-up", message: getTutorError(cause, "follow-up", navigator.onLine) });
     } finally {
-      setProgress(null);
+      finishRequest(request);
     }
   }
 
@@ -410,7 +475,7 @@ export default function Home() {
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.12fr)_minmax(0,1fr)] lg:gap-6">
-        <section className="rounded-2xl border border-[var(--intindi-border)] bg-white">
+        <section ref={editorPanelRef} tabIndex={-1} aria-label="Code editor" className="scroll-mt-4 rounded-2xl border border-[var(--intindi-border)] bg-white">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--intindi-border)] px-4 py-3 sm:px-5">
             <label htmlFor="excerpt" className="font-bold">Code or docs</label>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -428,13 +493,13 @@ export default function Home() {
             <textarea
               ref={editorRef}
               id="excerpt"
-              rows={8}
+              rows={4}
               value={input}
               disabled={!!progress}
               placeholder="Paste your snippet here…"
               aria-describedby={excerptLength > 0 && !tooLong ? "detected-language input-limit cloud-note" : "input-limit cloud-note"}
               aria-invalid={tooLong}
-              className="block min-h-40 w-full resize-y rounded-lg border border-[var(--intindi-border)] bg-[var(--intindi-paper)] p-3 font-mono text-sm leading-6 placeholder:text-[var(--intindi-muted)]"
+              className={`block w-full resize-y rounded-lg border border-[var(--intindi-border)] bg-[var(--intindi-paper)] p-3 font-mono text-base leading-6 placeholder:text-[var(--intindi-muted)] lg:min-h-52 lg:text-sm ${expandedEditor ? "min-h-60" : "min-h-28"}`}
               onChange={event => selectExcerpt(event.target.value)}
               onKeyDown={event => {
                 if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canExplain) {
@@ -444,6 +509,11 @@ export default function Home() {
               }}
             />
             <div className="mt-2 flex flex-wrap gap-1">
+              <button type="button" aria-expanded={expandedEditor} aria-controls="excerpt"
+                onClick={() => setExpandedEditor(!expandedEditor)}
+                className="pressable min-h-11 rounded-lg px-2.5 text-xs font-semibold hover:bg-[var(--intindi-sky)] lg:hidden">
+                {expandedEditor ? "Compact editor" : "Expand editor"}
+              </button>
               {samples.map(({ label, icon: Icon, excerpt }) => (
                 <button
                   key={label}
@@ -464,12 +534,14 @@ export default function Home() {
             {!configured && <p role="status" className="mt-2 text-sm">Add your Firebase web config to .env.local first.</p>}
             <button
               type="button"
-              onClick={explain}
+              onClick={() => void explain()}
               disabled={!canExplain}
               aria-keyshortcuts="Control+Enter Meta+Enter"
               className="pressable mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-[var(--intindi-apricot)] px-4 text-sm font-bold hover:bg-[#ffb678] disabled:opacity-50"
             >
-              {busy && progress.stage !== "walkthrough" && progress.stage !== "follow-up" ? "Working on your explanation…" : "Explain in Taglish"}
+              {busy && progress.stage !== "walkthrough" && progress.stage !== "follow-up"
+                ? "Working on your explanation…"
+                : savedMatch ? "Open saved answer" : "Explain in Taglish"}
               {busy && progress.stage !== "walkthrough" && progress.stage !== "follow-up"
                 ? <LoaderCircle aria-hidden="true" size={17} className="progress-icon" />
                 : <ArrowRight aria-hidden="true" size={17} />}
@@ -491,6 +563,12 @@ export default function Home() {
             aria-labelledby="answer-heading"
             className="min-h-48 scroll-mt-4 rounded-2xl border border-[var(--intindi-border)] bg-[var(--intindi-sky)] p-4 sm:p-5"
           >
+            <button type="button" onClick={() => {
+              editorPanelRef.current?.focus({ preventScroll: true });
+              scrollToPanel(editorPanelRef.current);
+            }} className="pressable mb-2 inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-xs font-semibold lg:hidden">
+              <ArrowRight aria-hidden="true" size={15} className="rotate-180" /> Back to code
+            </button>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 id="answer-heading" className="font-bold">Quick explanation</h2>
               {result && (
@@ -509,24 +587,36 @@ export default function Home() {
                 <p className="text-sm leading-6 text-[var(--intindi-muted)]">Paste a snippet or choose a sample to get started.</p>
               )}
             </div>
-            {result?.durationMs !== undefined && (
+            {fromHistory && result ? (
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--intindi-muted)]">
+                <p>Opened from History.</p>
+                {configured && (
+                  <button type="button" disabled={busy} onClick={() => void explain(true)}
+                    className="pressable min-h-8 rounded px-1 font-semibold underline underline-offset-2 disabled:opacity-50">
+                    Generate fresh
+                  </button>
+                )}
+              </div>
+            ) : result?.durationMs !== undefined && (
               <p className="mt-2 text-xs tabular-nums text-[var(--intindi-muted)]">Took {formatElapsed(result.durationMs)}</p>
             )}
-            {result && !walkthrough && progress?.stage !== "walkthrough" && error?.task !== "walkthrough" && (
-              <div className="mt-4 border-t border-[var(--intindi-border)] pt-3">
+            {result && (
+              <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--intindi-border)] pt-3">
+                {!walkthrough && progress?.stage !== "walkthrough" && error?.task !== "walkthrough" && (
                 <button
                   type="button"
                   onClick={goDeeper}
                   disabled={!!progress}
-                  className="pressable inline-flex min-h-10 items-center gap-2 rounded-lg border border-[var(--intindi-focus)] px-3 text-sm font-bold hover:bg-white disabled:opacity-50"
+                  className="pressable inline-flex min-h-11 items-center gap-2 rounded-lg border border-[var(--intindi-focus)] px-3 text-sm font-bold hover:bg-white disabled:opacity-50"
                 >
                   Go deeper
                   <ArrowDown aria-hidden="true" size={16} />
                 </button>
-                <p className="mt-2 text-xs leading-5 text-[var(--intindi-muted)]">Uses Gemini in the cloud for line notes, a worked example, and practice questions.</p>
+                )}
+                <p className="basis-full text-xs leading-5 text-[var(--intindi-muted)]">Walkthroughs use Gemini in the cloud.</p>
               </div>
             )}
-            {progress && progress.stage !== "walkthrough" && progress.stage !== "follow-up" && <TutorLoading progress={progress} startedAt={startedAt} />}
+            {progress && progress.stage !== "walkthrough" && progress.stage !== "follow-up" && <TutorLoading progress={progress} startedAt={startedAt} onCancel={stopWaiting} />}
             {error && error.task !== "follow-up" && (
               <div className="answer-enter mt-3 rounded-xl border border-[#efc7b8] bg-[#fff4ee] p-3 text-[#763122]">
                 <p role="alert" className="flex items-start gap-2 text-sm leading-6">
@@ -535,7 +625,7 @@ export default function Home() {
                 </p>
                 <button
                   type="button"
-                  onClick={error.task === "quick" ? explain : goDeeper}
+                  onClick={error.task === "quick" ? () => void explain(true) : goDeeper}
                   className="pressable mt-2 inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#efc7b8] px-3 text-sm font-semibold hover:bg-white"
                 >
                   <RotateCcw aria-hidden="true" size={15} />
@@ -548,7 +638,7 @@ export default function Home() {
           {progress?.stage === "walkthrough" && (
             <section aria-label="Walkthrough loading" className="answer-enter rounded-2xl border border-[var(--intindi-border)] bg-white p-4 sm:p-5">
               <h2 className="font-bold">Walkthrough</h2>
-              <TutorLoading progress={progress} startedAt={startedAt} />
+              <TutorLoading progress={progress} startedAt={startedAt} onCancel={stopWaiting} />
             </section>
           )}
           {walkthrough && (
@@ -565,11 +655,19 @@ export default function Home() {
                 </span>
               </div>
               {walkthrough.lineNotes && <LineByLine excerpt={current.input} notes={walkthrough.lineNotes} onLocate={locateLine} />}
-              <WalkthroughContent text={walkthrough.text} excerpt={current.input} onLocate={locateQuote} />
+              <WalkthroughContent text={walkthrough.text} excerpt={current.input} onLocate={locateQuote} showPractice={!quiz} />
+              {quiz && (
+                <MiniQuiz questions={quiz} best={bestScore >= 0 ? bestScore : undefined}
+                  onLocate={locateQuote}
+                  onScore={score => {
+                    if (score > bestScore) save({ ...current, quizBest: score });
+                  }}
+                />
+              )}
             </section>
           )}
           {current && (
-            <details key={`follow-up-${current.id}`} className="group rounded-2xl border border-[var(--intindi-border)] bg-white">
+            <details key={`follow-up-${current.id}`} className="group scroll-mt-4 rounded-2xl border border-[var(--intindi-border)] bg-white">
               <summary className="pressable flex min-h-12 cursor-pointer list-none items-center justify-between gap-2 rounded-2xl px-4 text-sm font-bold hover:bg-[var(--intindi-sky)] [&::-webkit-details-marker]:hidden">
                 <span className="inline-flex items-center gap-2"><MessageCircle aria-hidden="true" size={16} /> Ask a follow-up</span>
                 <ChevronDown aria-hidden="true" size={16} className="disclosure-chevron shrink-0 group-open:rotate-180" />
@@ -614,7 +712,7 @@ export default function Home() {
                     maxLength={maxFollowUpLength}
                     placeholder="What part is still unclear?"
                     aria-describedby="follow-up-privacy follow-up-limit"
-                    className="block w-full resize-y rounded-lg border border-[var(--intindi-border)] bg-[var(--intindi-paper)] p-3 text-sm"
+                    className="block w-full resize-y rounded-lg border border-[var(--intindi-border)] bg-[var(--intindi-paper)] p-3 text-base lg:text-sm"
                     onChange={event => {
                       setQuestion(event.target.value);
                       if (error?.task === "follow-up") setError(null);
@@ -636,7 +734,7 @@ export default function Home() {
                       : "You’ve reached the follow-up limit. Try again in a few minutes."}
                   </p>
                 </form>
-                {progress?.stage === "follow-up" && <TutorLoading progress={progress} startedAt={startedAt} />}
+                {progress?.stage === "follow-up" && <TutorLoading progress={progress} startedAt={startedAt} onCancel={stopWaiting} />}
                 {error?.task === "follow-up" && <p role="alert" className="text-sm text-[#763122]">{error.message}</p>}
               </div>
             </details>
@@ -645,11 +743,33 @@ export default function Home() {
       </div>
 
       <section aria-labelledby="history-heading" className="mt-8 border-t border-[var(--intindi-border)] pt-4">
-        <h2 id="history-heading" className="flex items-center gap-2 font-bold">
-          <History aria-hidden="true" size={17} /> History
-        </h2>
-        <p className="mt-1 text-sm text-[var(--intindi-muted)]">Your last five excerpts and answers are saved in this browser.</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="history-heading" className="flex items-center gap-2 font-bold">
+            <History aria-hidden="true" size={17} /> History
+          </h2>
+          {history.length > 0 && (
+            <button type="button" disabled={busy} aria-expanded={confirmClear}
+              onClick={() => setConfirmClear(!confirmClear)}
+              className="pressable inline-flex min-h-10 items-center gap-2 rounded-lg px-2 text-sm font-semibold hover:bg-[var(--intindi-sky)] disabled:opacity-50">
+              <Trash2 aria-hidden="true" size={15} /> Clear history
+            </button>
+          )}
+        </div>
+        <p role="status" className="mt-1 text-sm text-[var(--intindi-muted)]">
+          {history.length > 0 ? "Your last five excerpts and answers are saved in this browser." : "No saved explanations."}
+        </p>
         {historyError && <p role="status" className="mt-2 text-sm">{historyError}</p>}
+        {confirmClear && history.length > 0 && (
+          <div className="answer-enter mt-3 rounded-xl border border-[#efc7b8] bg-[#fff4ee] p-3">
+            <p className="text-sm leading-6">Delete saved explanations, walkthroughs, and quiz scores from this browser?</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button type="button" onClick={() => setConfirmClear(false)}
+                className="pressable min-h-10 rounded-lg border border-[#efc7b8] px-3 text-sm font-semibold hover:bg-white">Cancel</button>
+              <button type="button" disabled={busy} onClick={clearHistory}
+                className="pressable min-h-10 rounded-lg bg-[#763122] px-3 text-sm font-semibold text-white hover:bg-[#60271b] disabled:opacity-50">Delete history</button>
+            </div>
+          </div>
+        )}
         {history.length > 0 && (
           <ul className="mt-3 divide-y divide-[var(--intindi-border)] overflow-hidden rounded-xl border border-[var(--intindi-border)] bg-white">
             {history.map(entry => (
