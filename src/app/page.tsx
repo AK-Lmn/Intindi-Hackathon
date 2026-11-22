@@ -449,7 +449,7 @@ export default function Home() {
     showAnswer();
     try {
       const excerpt = input.trim();
-      const explanation = await explainInTaglish(excerpt, update => {
+      const explanation = await explainInTaglish(excerpt, language, update => {
         if (request.signal.aborted) return;
         if (update.stage !== "checking" || !expectsDownload) setProgress(update);
         if (update.stage === "device") setAvailability("available");
