@@ -77,6 +77,13 @@ npm run build
 - Click **Go deeper** offline. The quick answer should stay visible with connection guidance. Reconnect and retry. Check for the **Cloud** badge, source quotes, and three practice questions.
 - In a browser without Nano, use **Sample docs** online and check for the **Cloud** badge. Reopen the saved explanation from History.
 
+## Verified with Kane CLI
+
+- Happy-path flow (`tests/intindi-happy-path_test.md`): **6/6 steps passed in 245s** — Open Intindi, Load the sample code, Explain in Taglish, Go deeper, Check History, History survives a reload. Session `d959df41-0d03-46f7-8650-2cd0214ed4e7`, 22 Nov 2026.
+- Demo video: https://youtu.be/u9f2DKiRfxc
+- What Kane caught (closed loop): the on-device path threw uncaught errors to the UI when Gemini Nano struggled with mixed Taglish vocabulary, so the cloud fallback never ran. Fixed with a try/catch in `src/lib/ai.ts` so on-device errors fall through to cloud Gemini — then re-ran green. Kane's runs also exposed test and environment issues (placeholder assertions, a stale output folder, fresh-profile Nano re-downloads), fixed by rewording verifications into direct text checks, a pre-run cleanup, and driving the already-downloaded Nano model via CDP.
+- On-device note: the on-device path is verified manually and in the demo video (wifi-off moment) — Chrome's Prompt API blocks `create()` under CDP automation, so a Kane run cannot exercise the on-device badge directly.
+
 ## Known Limitations
 
 - Offline inference requires desktop Chrome with the Nano model already downloaded. Keep the app tab open, since reopening or refreshing may need internet.
